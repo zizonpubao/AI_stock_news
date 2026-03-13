@@ -7,7 +7,7 @@ COPY build.gradle .
 COPY settings.gradle .
 COPY src src
 RUN chmod +x gradlew
-RUN ./gradlew bootJar --no-daemon
+RUN ./gradlew bootJar --no-daemon -x test
 
 # 실행 단계
 FROM eclipse-temurin:17-jre
