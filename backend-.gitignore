@@ -1,0 +1,15 @@
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 로컬 설정 (API키 포함) - GitHub에 올리면 안됨
+src/main/resources/application-local.yml
+
+# OS
+.DS_Store
+Thumbs.db

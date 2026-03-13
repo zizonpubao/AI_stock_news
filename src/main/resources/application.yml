@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: stock-news-backend
+  profiles:
+    active: local  # 기본은 로컬
+
+server:
+  port: 8080
+
+scheduler:
+  stock-update:
+    cron: "0 0 9-16 * * MON-FRI"
+
+logging:
+  level:
+    com.stocknews: DEBUG
+    org.springframework.web: INFO
