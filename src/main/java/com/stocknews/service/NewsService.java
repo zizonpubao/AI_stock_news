@@ -74,6 +74,8 @@ public class NewsService {
                     .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .defaultHeader("X-Naver-Client-Id", clientId)
                     .defaultHeader("X-Naver-Client-Secret", clientSecret)
+                    .defaultHeader("Referer", "https://web-production-fffaa.up.railway.app")
+                    .defaultHeader("Origin", "https://web-production-fffaa.up.railway.app")
                     .build();
 
             String response = client.get()
