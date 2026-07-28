@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    driver-class-name: org.postgresql.Driver
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update  # 운영에서는 update (데이터 유지)
+    show-sql: false
+  h2:
+    console:
+      enabled: false  # 운영에서는 H2 콘솔 비활성화
+
+naver:
+  api:
+    client-id: ${NAVER_CLIENT_ID}
+    client-secret: ${NAVER_CLIENT_SECRET}
+    news-url: https://openapi.naver.com/v1/search/news.json
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY}
+    url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
