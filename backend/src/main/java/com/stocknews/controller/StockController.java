@@ -1,10 +1,12 @@
 package com.stocknews.controller;
 
+import com.stocknews.dto.MarketIndexDto;
 import com.stocknews.dto.NewsDto;
 import com.stocknews.dto.StockDto;
 import com.stocknews.repository.NewsRepository;
 import com.stocknews.repository.StockRepository;
 import com.stocknews.scheduler.StockScheduler;
+import com.stocknews.service.MarketIndexService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +26,7 @@ public class StockController {
     private final StockRepository stockRepository;
     private final NewsRepository newsRepository;
     private final StockScheduler stockScheduler;
+    private final MarketIndexService marketIndexService;
 
     @GetMapping("/stocks/top10")
     public ResponseEntity<List<StockDto>> getTop10() {
@@ -52,6 +55,11 @@ public class StockController {
         log.info("수동 갱신 요청");
         new Thread(stockScheduler::updateAllStocks).start();
         return ResponseEntity.ok(Map.of("message", "갱신 시작됨. 잠시 후 다시 조회해주세요."));
+    }
+
+    @GetMapping("/market/indices")
+    public ResponseEntity<List<MarketIndexDto>> getIndices() {
+        return ResponseEntity.ok(marketIndexService.getIndices());
     }
 
     @GetMapping("/health")

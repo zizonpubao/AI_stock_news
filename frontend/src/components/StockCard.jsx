@@ -1,6 +1,9 @@
+import { formatTradingValue } from '../api/stockApi';
+
 export default function StockCard({ stock, rank, selected, onClick }) {
   const isUp = stock.changeRate && !stock.changeRate.startsWith('-');
-  const changeColor = isUp ? 'var(--green)' : 'var(--red)';
+  // 한국식: 상승=빨강, 하락=파랑
+  const changeColor = isUp ? 'var(--red)' : 'var(--blue)';
 
   const Badge = ({ label, value }) => (
     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border)] text-slate-400">
@@ -73,7 +76,7 @@ export default function StockCard({ stock, rank, selected, onClick }) {
           <Badge label="추정PER" value={stock.estimatedPer || 'X'} />
           <Badge label="PBR" value={stock.pbr || 'X'} />
           <span className="ml-auto text-[10px] font-mono text-slate-500">
-            거래량 {stock.volume}
+            거래대금 <span className="text-slate-300">{formatTradingValue(stock.tradingValue)}</span>
           </span>
         </div>
 

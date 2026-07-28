@@ -13,7 +13,7 @@ server:
 
 scheduler:
   stock-update:
-    cron: "0 0 9-16 * * MON-FRI"
+    cron: "0 0 9-20 * * MON-FRI"   # 평일 9~20시 매시 정각 (프리장 포함)
 
 logging:
   level:

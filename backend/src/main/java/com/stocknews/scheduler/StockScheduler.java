@@ -33,7 +33,8 @@ public class StockScheduler {
         updateAllStocks();
     }
 
-    @Scheduled(cron = "${scheduler.stock-update.cron}")
+    // zone 지정: EC2(UTC) 서버에서도 한국시간(KST) 기준 9~20시에 실행되도록
+    @Scheduled(cron = "${scheduler.stock-update.cron}", zone = "Asia/Seoul")
     public void scheduledUpdate() {
         log.info("스케줄러 실행 - 급상승 종목 업데이트");
         updateAllStocks();

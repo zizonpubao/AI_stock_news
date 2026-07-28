@@ -143,7 +143,8 @@ export default function NewsPanel({ stock }) {
       {/* 패널 헤더 */}
       {(() => {
         const isDown = stock.changeRate?.startsWith('-');
-        const priceColor = isDown ? 'var(--red)' : 'var(--green)';
+        // 한국식: 하락=파랑, 상승=빨강
+        const priceColor = isDown ? 'var(--blue)' : 'var(--red)';
         const arrow = isDown ? '▼' : '▲';
         // changePrice에서 숫자만 추출 후 부호 붙이기
         const changePriceNum = stock.changePrice?.replace(/[^0-9,]/g, '') || '';
@@ -178,7 +179,7 @@ export default function NewsPanel({ stock }) {
                 <span className="font-mono text-sm font-semibold" style={{ color: priceColor }}>
                   {arrow} {changePriceDisplay}
                 </span>
-                <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ color: priceColor, background: isDown ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)' }}>
+                <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ color: priceColor, background: isDown ? 'rgba(59,130,246,0.12)' : 'rgba(255,68,102,0.12)' }}>
                   {changeRateDisplay}
                 </span>
               </div>

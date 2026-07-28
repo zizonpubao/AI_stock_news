@@ -111,6 +111,8 @@ public class StockCrawlerService {
             stock.setChangePrice(changePriceFormatted);
             stock.setChangeRate(changeRateFormatted);
             stock.setVolume(volume);
+            // 거래대금(원) ≈ 현재가 × 거래량 (lastsearch2 페이지에 거래대금 컬럼이 없어 계산)
+            stock.setTradingValue(computeTradingValue(currentPrice, volume));
             stock.setRanking(rank);
 
             stockRepository.save(stock);
@@ -224,6 +226,18 @@ public class StockCrawlerService {
         int idx = text.indexOf(delimiter);
         if (idx > 0) return text.substring(0, idx).trim();
         return null;
+    }
+
+    /** "1,550,000" × "7,376,718" → 거래대금(원). 파싱 실패 시 null. */
+    private Long computeTradingValue(String price, String volume) {
+        try {
+            long p = Long.parseLong(price.replaceAll("[^0-9]", ""));
+            long v = Long.parseLong(volume.replaceAll("[^0-9]", ""));
+            if (p <= 0 || v <= 0) return null;
+            return p * v;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String extractCode(String href) {

@@ -20,6 +20,7 @@ public class Stock {
     private String changeRate;
     private String changePrice;
     private String volume;
+    private Long tradingValue;   // 거래대금(원) = 현재가 × 거래량 (프론트에서 조 단위 표시)
     private Integer ranking;
 
     // 추가 지표
