@@ -20,7 +20,7 @@ Google Gemini가 투자 관점에서 분석해주는 웹 서비스입니다. 평
                           frontend (Vercel) ── 사용자
 ```
 
-- **backend**: EC2 위 Docker 컨테이너로 실행, PostgreSQL은 동일 호스트의 Docker(또는 RDS).
+- **backend**: EC2 위 Docker 컨테이너로 실행, PostgreSQL은 무료 클라우드 DB(**Neon**).
 - **frontend**: Vercel 정적 배포. `REACT_APP_API_URL` 로 백엔드 주소 주입.
 
 ## 로컬 실행
@@ -40,9 +40,9 @@ npm install
 npm start   # http://localhost:3000  (기본 API: http://localhost:8080/api)
 ```
 
-### 전체 스택 (Docker, 백엔드 + PostgreSQL)
+### 백엔드 컨테이너 (Docker, 외부 Neon DB 연결)
 ```bash
-cp .env.example .env   # 값 채우기 (API 키, DB 비밀번호)
+cp .env.example .env   # 값 채우기 (Neon DB 연결정보, API 키)
 docker compose up -d --build
 # 백엔드: http://localhost:8080/api/health
 ```

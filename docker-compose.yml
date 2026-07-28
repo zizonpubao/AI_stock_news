@@ -1,35 +1,16 @@
-# EC2(또는 로컬)에서 백엔드 + PostgreSQL 을 한 번에 실행.
+# EC2(또는 로컬)에서 백엔드 컨테이너 실행.
+# DB 는 외부 클라우드 PostgreSQL(Neon/Supabase 등)을 사용합니다.
 # 값은 같은 폴더의 .env 파일에서 주입됩니다. (.env.example 참고)
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: stockpulse-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-stockdb}
-      POSTGRES_USER: ${DATABASE_USERNAME:-postgres}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD 를 .env 에 설정하세요}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-postgres} -d ${POSTGRES_DB:-stockdb}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: ./backend
     container_name: stockpulse-backend
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      # 컨테이너 내부에서는 호스트명이 'postgres' (서비스명)
-      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stockdb}
-      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
+      DATABASE_URL: ${DATABASE_URL}            # 예) jdbc:postgresql://ep-xxx.neon.tech/dbname?sslmode=require
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET}
@@ -38,5 +19,5 @@ services:
     ports:
       - "8080:8080"
 
-volumes:
-  pgdata:
+# 로컬에서 굳이 컨테이너 DB 를 쓰고 싶으면 아래 주석을 풀고 backend 에 depends_on 을 추가하세요.
+# 기본 경로는 Neon/Supabase 같은 무료 클라우드 DB 사용입니다.

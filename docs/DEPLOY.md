@@ -39,16 +39,18 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
 ### 1-3. 앱 배포
+> 먼저 아래 **1-5. 클라우드 DB(Neon)** 를 만들어 연결 문자열을 준비하세요.
 ```bash
 git clone https://github.com/zizonpubao/AI_stock_news.git
 cd AI_stock_news
 cp .env.example .env
-nano .env   # DB 비밀번호 + 네이버/Gemini API 키 채우기
+nano .env   # Neon DB 연결정보 + 네이버/Gemini API 키 채우기
 docker compose up -d --build
 docker compose ps
 curl http://localhost:8080/api/health
 ```
 외부에서 `http://<EC2-퍼블릭-IP>:8080/api/health` 확인.
+(DB 는 EC2 밖 Neon 을 쓰므로 컨테이너는 backend 하나만 뜹니다.)
 
 ### 1-4. (권장) 도메인 + HTTPS
 브라우저(HTTPS Vercel)에서 `http://IP:8080` 호출은 **혼합 콘텐츠로 차단**됩니다.
@@ -101,19 +103,33 @@ GitHub → Settings → Secrets and variables → Actions 에 등록:
 
 ---
 
-## 4. PostgreSQL 을 RDS 로 이전 (확장 시)
+### 1-5. 클라우드 DB — Neon (무료 PostgreSQL)
 
-트래픽/데이터가 커지면 DB를 EC2 밖 관리형 RDS로 분리:
-1. RDS PostgreSQL 인스턴스 생성(같은 VPC, 보안그룹에서 EC2 → 5432 허용).
-2. `docker-compose.yml` 의 `postgres` 서비스 제거, `backend` 의 `depends_on` 제거.
-3. `.env` 의 `DATABASE_URL` 을 `jdbc:postgresql://<rds-endpoint>:5432/stockdb` 로 변경.
-4. `docker compose up -d --build backend`.
+DB는 EC2에 두지 않고 무료 서버리스 Postgres인 **Neon**을 씁니다. (대안: Supabase — 방식 동일)
+
+1. [neon.tech](https://neon.tech) 가입 → **Create Project** (region은 가까운 곳, 예: AWS `ap-southeast-1`).
+2. 생성되면 **Connection Details** 에 연결 문자열이 나옵니다:
+   ```
+   postgresql://<user>:<password>@ep-xxxx.ap-southeast-1.aws.neon.tech/<dbname>?sslmode=require
+   ```
+3. 이를 `.env` 에 **JDBC 형식**으로 나눠서 입력:
+   ```
+   DATABASE_URL=jdbc:postgresql://ep-xxxx.ap-southeast-1.aws.neon.tech/<dbname>?sslmode=require
+   DATABASE_USERNAME=<user>
+   DATABASE_PASSWORD=<password>
+   ```
+   > 포인트: `postgresql://` → `jdbc:postgresql://` 로 바꾸고, `user:password@` 부분은 URL 에서 빼서
+   > `DATABASE_USERNAME` / `DATABASE_PASSWORD` 로 분리. `?sslmode=require` 는 그대로 유지(Neon 필수).
+4. 스키마는 앱 최초 실행 시 JPA(`ddl-auto: update`)가 자동 생성합니다.
+
+GitHub Actions Secrets 에도 동일하게 넣거나, EC2 의 `.env` 에서 관리하면 됩니다.
 
 ---
 
 ## 5. 참고 — 로컬에서 배포 구성 검증
 ```bash
-cp .env.example .env   # 값 채우기
+cp .env.example .env   # Neon 연결정보 + API 키 채우기
 docker compose up -d --build
 curl http://localhost:8080/api/health
 ```
+로컬 개발만 할 때는 DB 없이 H2 로 도는 `./gradlew bootRun` 이 더 간단합니다.
