@@ -1,5 +1,6 @@
 package com.stocknews.dto;
 
+import com.stocknews.entity.DailyArchiveStock;
 import com.stocknews.entity.Stock;
 import lombok.Getter;
 import java.time.LocalDateTime;
@@ -39,6 +40,27 @@ public class StockDto {
         dto.pbr = stock.getPbr();
         dto.aiAnalysis = stock.getAiAnalysis();
         dto.updatedAt = stock.getUpdatedAt();
+        return dto;
+    }
+
+    /** 아카이브 종목 → 동일한 StockDto 형태 (프론트가 실시간과 같은 카드로 렌더) */
+    public static StockDto from(DailyArchiveStock a) {
+        StockDto dto = new StockDto();
+        dto.id = a.getId();
+        dto.code = a.getCode();
+        dto.name = a.getName();
+        dto.currentPrice = a.getCurrentPrice();
+        dto.changeRate = a.getChangeRate();
+        dto.changePrice = a.getChangePrice();
+        dto.volume = a.getVolume();
+        dto.tradingValue = a.getTradingValue();
+        dto.ranking = a.getRanking();
+        dto.high52Week = a.getHigh52Week();
+        dto.per = a.getPer();
+        dto.estimatedPer = a.getEstimatedPer();
+        dto.pbr = a.getPbr();
+        dto.aiAnalysis = a.getAiAnalysis();
+        dto.updatedAt = a.getSnapshotDate() != null ? a.getSnapshotDate().atTime(16, 0) : null;
         return dto;
     }
 }

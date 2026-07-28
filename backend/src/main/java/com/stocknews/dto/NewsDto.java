@@ -1,5 +1,6 @@
 package com.stocknews.dto;
 
+import com.stocknews.entity.DailyArchiveNews;
 import com.stocknews.entity.NewsArticle;
 import lombok.Getter;
 import java.time.LocalDateTime;
@@ -21,6 +22,17 @@ public class NewsDto {
         dto.link = article.getLink();
         dto.pubDate = article.getPubDate();
         dto.collectedAt = article.getCollectedAt();
+        return dto;
+    }
+
+    public static NewsDto from(DailyArchiveNews article) {
+        NewsDto dto = new NewsDto();
+        dto.id = article.getId();
+        dto.title = article.getTitle();
+        dto.description = article.getDescription();
+        dto.link = article.getLink();
+        dto.pubDate = article.getPubDate();
+        dto.collectedAt = null;
         return dto;
     }
 }

@@ -2,6 +2,7 @@ package com.stocknews.scheduler;
 
 import com.stocknews.entity.NewsArticle;
 import com.stocknews.entity.Stock;
+import com.stocknews.service.ArchiveService;
 import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.NewsService;
 import com.stocknews.service.StockCrawlerService;
@@ -26,6 +27,7 @@ public class StockScheduler {
     private final StockCrawlerService stockCrawlerService;
     private final NewsService newsService;
     private final GeminiAnalysisService geminiAnalysisService;
+    private final ArchiveService archiveService;
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
@@ -38,6 +40,17 @@ public class StockScheduler {
     public void scheduledUpdate() {
         log.info("스케줄러 실행 - 급상승 종목 업데이트");
         updateAllStocks();
+    }
+
+    // 매 거래일 종가 후(16:05 KST) 그날의 TOP10 + 뉴스 + AI분석을 날짜별 아카이브로 적재
+    @Scheduled(cron = "0 5 16 * * MON-FRI", zone = "Asia/Seoul")
+    public void archiveDaily() {
+        log.info("스케줄러 실행 - 일일 아카이브 적재");
+        try {
+            archiveService.archiveToday();
+        } catch (Exception e) {
+            log.error("일일 아카이브 실패: {}", e.getMessage());
+        }
     }
 
     public void updateAllStocks() {

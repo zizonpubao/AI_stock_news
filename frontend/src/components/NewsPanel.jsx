@@ -108,7 +108,7 @@ function AiAnalysis({ text }) {
   );
 }
 
-export default function NewsPanel({ stock }) {
+export default function NewsPanel({ stock, fetchNews = fetchStockNews }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -119,11 +119,11 @@ export default function NewsPanel({ stock }) {
     setError(null);
     setData(null);
 
-    fetchStockNews(stock.id)
+    fetchNews(stock.id)
       .then(setData)
       .catch(() => setError('뉴스를 불러오지 못했습니다.'))
       .finally(() => setLoading(false));
-  }, [stock?.id]);
+  }, [stock?.id, fetchNews]);
 
   if (!stock) {
     return (

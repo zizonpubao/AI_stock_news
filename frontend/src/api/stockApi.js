@@ -11,6 +11,11 @@ export const refreshStocks = () => api.post('/stocks/refresh').then(r => r.data)
 export const fetchHealth = () => api.get('/health').then(r => r.data);
 export const fetchIndices = () => api.get('/market/indices').then(r => r.data);
 
+// 날짜별 아카이브
+export const fetchArchiveDates = () => api.get('/archive/dates').then(r => r.data);
+export const fetchArchiveStocks = (date) => api.get(`/archive/${date}/stocks`).then(r => r.data);
+export const fetchArchiveStockNews = (id) => api.get(`/archive/stocks/${id}/news`).then(r => r.data);
+
 // 거래대금(원 숫자) → "11.4조" / "3,270억" 형식
 export const formatTradingValue = (won) => {
   if (won == null) return '-';
