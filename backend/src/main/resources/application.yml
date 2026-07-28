@@ -3,6 +3,10 @@ spring:
     name: stock-news-backend
   profiles:
     active: local  # 기본은 로컬
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false   # 날짜를 ISO 문자열로 (프론트 Invalid Date 방지)
+    time-zone: Asia/Seoul
 
 server:
   port: 8080
