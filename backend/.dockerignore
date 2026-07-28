@@ -1,0 +1,9 @@
+# Docker 빌드 컨텍스트에서 제외 — 컨테이너 안에서 gradle 이 새로 빌드함
+.gradle/
+build/
+.idea/
+*.iml
+.git/
+.vscode/
+# 로컬 시크릿은 이미지에 넣지 않음
+src/main/resources/application-local.yml
