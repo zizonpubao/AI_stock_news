@@ -65,11 +65,6 @@ export default function StockCard({ stock, rank, selected, onClick }) {
                 <span className="font-mono text-sm font-semibold" style={{ color: changeColor }}>
                   {isUp ? '▲' : '▼'} {changeRateDisplay}
                 </span>
-                {sessionLabel && (
-                  <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-[var(--border)] text-slate-300">
-                    {sessionLabel}
-                  </span>
-                )}
               </div>
               <span className="text-[13px] font-mono text-white">
                 {changePriceDisplay}
@@ -83,7 +78,12 @@ export default function StockCard({ stock, rank, selected, onClick }) {
           <Badge label="PER" value={stock.per || 'X'} />
           <Badge label="추정PER" value={stock.estimatedPer || 'X'} />
           <Badge label="PBR" value={stock.pbr || 'X'} />
-          <span className="ml-auto text-[10px] font-mono text-slate-500">
+          {sessionLabel && (
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border)] text-amber-300 whitespace-nowrap">
+              {sessionLabel}
+            </span>
+          )}
+          <span className="ml-auto text-[10px] font-mono text-slate-500 whitespace-nowrap">
             거래대금 <span className="text-slate-300">{formatTradingValue(stock.tradingValue)}</span>
           </span>
         </div>

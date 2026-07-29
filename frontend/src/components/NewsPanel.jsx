@@ -183,7 +183,7 @@ export default function NewsPanel({ stock, fetchNews = fetchStockNews }) {
                   {changeRateDisplay}
                 </span>
                 {({ PRE: '🌅 프리장', AFTER: '🌙 애프터마켓' })[stock.marketSession] && (
-                  <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--border)] text-slate-300">
+                  <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--border)] text-amber-300 whitespace-nowrap">
                     {({ PRE: '🌅 프리장', AFTER: '🌙 애프터마켓' })[stock.marketSession]}
                   </span>
                 )}
