@@ -43,11 +43,11 @@
 
 </div>
 
-<!-- 스크린샷을 넣으려면 docs/ 폴더에 이미지를 추가하고 아래 주석을 해제하세요
 <div align="center">
-  <img src="docs/screenshot-main.png" width="85%"/>
+  <img src="docs/img/hero.png" width="92%" alt="StockPulse 대시보드"/>
+  <br/>
+  <sub>한 화면에서 급상승 TOP10 · AI 투자 분석 · 관련 뉴스 · 코스피/코스닥 지수를 확인</sub>
 </div>
--->
 
 ---
 
@@ -63,15 +63,13 @@
 | 4 | 📊 코스피·코스닥 지수 | 상단 실시간 지수 |
 | 5 | 🗓 날짜별 아카이브 | 과거 거래일 종가 데이터 다시보기 |
 
-> 🎬 **아래 각 기능의 `데모 GIF 자리`** 는 직접 녹화해 넣으시면 됩니다 → [GIF 넣는 법](#-스크린샷--gif-넣는-법)
+> 📷 아래 이미지·GIF는 **실제 라이브 사이트에서 캡처**한 것입니다. (교체/재생성 방법은 [맨 아래](#-스크린샷--gif-재생성) 참고)
 
 <br/>
 
 ### 🔥 1. 실시간 급상승 TOP 10
 
-<!-- 녹화 후 주석 해제: 좌측 종목 리스트가 로딩되고, 카드에 가격/지표가 채워지는 장면 -->
-<!-- <div align="center"><img src="docs/gifs/01-top10.gif" width="90%"/></div> -->
-> 🎬 *데모 GIF 자리 — 좌측 TOP10 리스트 로딩 & 카드 지표*
+<div align="center"><img src="docs/gifs/01-top10.gif" width="90%" alt="종목 카드 클릭하며 둘러보기"/></div>
 
 화면 왼쪽에 **네이버 금융 인기검색 급상승 종목 1~10위**가 카드로 나열됩니다. 각 카드는 종목 하나에 대한 요약 대시보드예요.
 
@@ -88,9 +86,7 @@
 
 ### 🤖 2. Gemini AI 투자 분석
 
-<!-- 녹화 후 주석 해제: 종목 카드 클릭 → 우측 패널에 AI 리포트가 뜨는 장면 -->
-<!-- <div align="center"><img src="docs/gifs/02-ai-analysis.gif" width="90%"/></div> -->
-> 🎬 *데모 GIF 자리 — 종목 클릭 → 우측 AI 리포트 표시*
+<div align="center"><img src="docs/img/02-ai-analysis.png" width="88%" alt="Gemini AI 투자 분석 리포트"/></div>
 
 카드를 클릭하면 오른쪽 패널에 **Google Gemini 2.5 Flash** 가 생성한 투자 분석 리포트가 나타납니다. 종목의 시세 지표 + 수집된 뉴스를 함께 넣어 분석하며, 항상 **3개 섹션**으로 정리됩니다.
 
@@ -105,9 +101,7 @@
 
 ### 📰 3. 관련 뉴스 자동 수집
 
-<!-- 녹화 후 주석 해제: 우측 패널 하단 뉴스 목록 스크롤, 뉴스 클릭 시 새 탭 -->
-<!-- <div align="center"><img src="docs/gifs/03-news.gif" width="90%"/></div> -->
-> 🎬 *데모 GIF 자리 — 관련 뉴스 목록 & 원문 링크*
+<div align="center"><img src="docs/img/03-news.png" width="88%" alt="관련 뉴스 목록"/></div>
 
 AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가 붙습니다.
 - **48시간 이내** 발행 + **제목에 종목명 포함** 기사만 선별 (노이즈 제거)
@@ -118,9 +112,7 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 
 ### 📊 4. 코스피 · 코스닥 지수
 
-<!-- 녹화 후 주석 해제: 상단 헤더의 실시간 지수 -->
-<!-- <div align="center"><img src="docs/gifs/04-index.gif" width="90%"/></div> -->
-> 🎬 *데모 GIF 자리 — 상단 실시간 지수*
+<div align="center"><img src="docs/img/04-index.png" width="70%" alt="코스피 코스닥 실시간 지수"/></div>
 
 상단 헤더 시계 아래에 **코스피·코스닥 실시간 지수**가 표시됩니다 (예: `코스피 5,665.44 ▼ -358.22 (-5.95%)`). 개별 종목이 시장 전체 흐름과 어떤지 배경을 함께 볼 수 있어요. (백엔드에서 30초 캐시)
 
@@ -128,9 +120,7 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 
 ### 🗓 5. 날짜별 아카이브 (과거 데이터 다시보기)
 
-<!-- 녹화 후 주석 해제: 상단 날짜 선택기에서 과거 날짜 선택 → 그날 데이터로 전환 -->
-<!-- <div align="center"><img src="docs/gifs/05-archive.gif" width="90%"/></div> -->
-> 🎬 *데모 GIF 자리 — 날짜 선택 → 그날의 TOP10/뉴스/AI로 전환*
+<div align="center"><img src="docs/gifs/05-archive.gif" width="90%" alt="날짜 선택 → 그날의 아카이브로 전환"/></div>
 
 현재 데이터는 매시간 덮어써지지만, 매 거래일 **종가(16:05 KST)** 시점의 TOP10·뉴스·AI 분석은 **날짜별로 아카이브**됩니다.
 
@@ -149,20 +139,18 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 
 ---
 
-### 📸 스크린샷 / GIF 넣는 법
+### 📸 스크린샷 / GIF 재생성
 
-위 각 기능의 `데모 GIF 자리` 를 실제 GIF로 바꾸는 방법입니다.
+README의 이미지는 `docs/img/` (PNG), 움직이는 데모는 `docs/gifs/` (GIF) 에 있습니다.
+헤드리스 브라우저로 라이브 사이트를 조작하며 자동 캡처했습니다.
 
 <details>
-<summary>펼쳐서 보기</summary>
+<summary>직접 다시 만들거나 교체하려면</summary>
 
-1. **녹화** — Windows면 [ScreenToGif](https://www.screentogif.com/) (무료) 추천. 브라우저에서 해당 기능을 조작하며 5~10초 녹화 → GIF로 저장.
-2. **파일 배치** — 저장소에 `docs/gifs/` 폴더를 만들고 아래 이름으로 넣기:
-   - `01-top10.gif`, `02-ai-analysis.gif`, `03-news.gif`, `04-index.gif`, `05-archive.gif`
-3. **주석 해제** — 각 기능 위의 `<!-- <div align="center">...</div> -->` 주석을 풀면 GIF가 표시됩니다.
-4. 커밋 & 푸시하면 GitHub README에 바로 반영돼요.
+- **간단 교체** — [ScreenToGif](https://www.screentogif.com/)(무료)로 직접 녹화해 같은 파일명(`docs/gifs/01-top10.gif` 등)으로 덮어쓰기.
+- **자동 재생성** — `puppeteer-core` + `gifenc` + `pngjs` 로 라이브 사이트를 헤드리스 캡처 → 프레임을 GIF로 인코딩하는 스크립트로 생성했습니다. (설치된 Edge/Chrome 실행파일 사용)
 
-> 팁: GIF는 8MB 이하로 줄이면 로딩이 빠릅니다 (ScreenToGif의 "크기 조정 / 프레임 건너뛰기" 사용).
+> 팁: GIF는 뷰포트를 작게(≈1100px) 잡고 프레임 수를 줄이면 용량이 작아집니다. (현재 각 GIF 0.3~0.5MB)
 
 </details>
 
