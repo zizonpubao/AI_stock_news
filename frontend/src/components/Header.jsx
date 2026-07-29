@@ -57,7 +57,7 @@ export default function Header() {
             </div>
           )}
           <span className="text-[10px] font-mono mt-1 px-2 py-0.5 rounded-full border border-[var(--border)] text-slate-500">
-            🕐 매시 정각 자동 업데이트 (평일 9~20시)
+            🕐 매시 정각 자동 업데이트 (평일 8~20시 · 프리장~애프터마켓)
           </span>
         </div>
 

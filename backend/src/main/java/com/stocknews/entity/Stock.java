@@ -20,7 +20,8 @@ public class Stock {
     private String changeRate;
     private String changePrice;
     private String volume;
-    private Long tradingValue;   // 거래대금(원) = 현재가 × 거래량 (프론트에서 조 단위 표시)
+    private Long tradingValue;   // 거래대금(원). 실시간 API의 통합(KRX+NXT) 거래대금
+    private String marketSession; // REGULAR / PRE(프리장) / AFTER(애프터마켓) / CLOSED
     private Integer ranking;
 
     // 추가 지표

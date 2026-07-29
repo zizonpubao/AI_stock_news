@@ -4,6 +4,7 @@ import com.stocknews.entity.NewsArticle;
 import com.stocknews.entity.Stock;
 import com.stocknews.service.ArchiveService;
 import com.stocknews.service.GeminiAnalysisService;
+import com.stocknews.service.MarketPriceService;
 import com.stocknews.service.NewsService;
 import com.stocknews.service.StockCrawlerService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class StockScheduler {
     private final NewsService newsService;
     private final GeminiAnalysisService geminiAnalysisService;
     private final ArchiveService archiveService;
+    private final MarketPriceService marketPriceService;
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
@@ -35,9 +37,14 @@ public class StockScheduler {
         updateAllStocks();
     }
 
-    // zone 지정: EC2(UTC) 서버에서도 한국시간(KST) 기준 9~20시에 실행되도록
+    // zone 지정: EC2(UTC) 서버에서도 한국시간(KST) 기준 8~20시(프리장~애프터마켓)에 실행되도록
     @Scheduled(cron = "${scheduler.stock-update.cron}", zone = "Asia/Seoul")
     public void scheduledUpdate() {
+        // 주말/공휴일/임시휴장 자동 감지 → 휴장일이면 스킵 (마지막 거래일 데이터 유지)
+        if (!marketPriceService.isTradingToday()) {
+            log.info("휴장일로 판단 - 업데이트 스킵");
+            return;
+        }
         log.info("스케줄러 실행 - 급상승 종목 업데이트");
         updateAllStocks();
     }
@@ -45,6 +52,10 @@ public class StockScheduler {
     // 매 거래일 종가 후(16:05 KST) 그날의 TOP10 + 뉴스 + AI분석을 날짜별 아카이브로 적재
     @Scheduled(cron = "0 5 16 * * MON-FRI", zone = "Asia/Seoul")
     public void archiveDaily() {
+        if (!marketPriceService.isTradingToday()) {
+            log.info("휴장일로 판단 - 아카이브 스킵");
+            return;
+        }
         log.info("스케줄러 실행 - 일일 아카이브 적재");
         try {
             archiveService.archiveToday();

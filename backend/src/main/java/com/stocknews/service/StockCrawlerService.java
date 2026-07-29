@@ -21,6 +21,7 @@ import java.util.List;
 public class StockCrawlerService {
 
     private final StockRepository stockRepository;
+    private final MarketPriceService marketPriceService;
 
     @Transactional
     public List<Stock> crawlAndSaveTop10() {
@@ -54,7 +55,35 @@ public class StockCrawlerService {
             crawlStockDetail(result.get(i), i == 0); // 첫 종목만 디버그
         }
 
+        // 실시간 시세로 가격/거래대금 보강 (프리장·애프터마켓 반영)
+        enrichRealtimePrices(result);
+
         return result;
+    }
+
+    /**
+     * 인기검색 페이지는 정규장 가격만 주므로, 실시간 API로 프리장/애프터마켓 가격과
+     * 통합 거래대금을 덮어쓴다. 조회 실패 종목은 정규장 값 유지.
+     */
+    private void enrichRealtimePrices(List<Stock> stocks) {
+        List<String> codes = stocks.stream().map(Stock::getCode).toList();
+        var priceMap = marketPriceService.fetchPrices(codes);
+        for (Stock s : stocks) {
+            var p = priceMap.get(s.getCode());
+            if (p == null) {
+                if (s.getTradingValue() == null) s.setTradingValue(computeTradingValue(s.getCurrentPrice(), s.getVolume()));
+                if (s.getMarketSession() == null) s.setMarketSession("REGULAR");
+                continue;
+            }
+            if (p.price() != null && !p.price().isBlank()) s.setCurrentPrice(p.price());
+            if (p.changePrice() != null) s.setChangePrice(p.changePrice());
+            if (p.changeRate() != null) s.setChangeRate(p.changeRate());
+            s.setMarketSession(p.session());
+            s.setTradingValue(p.tradingValue() != null
+                    ? p.tradingValue()
+                    : computeTradingValue(s.getCurrentPrice(), s.getVolume()));
+            stockRepository.save(s);
+        }
     }
 
     private List<Stock> parseStocks(Document doc) {

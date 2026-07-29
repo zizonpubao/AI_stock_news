@@ -15,6 +15,7 @@ public class StockDto {
     private String changePrice;
     private String volume;
     private Long tradingValue;
+    private String marketSession;
     private Integer ranking;
     private String high52Week;
     private String per;
@@ -33,6 +34,7 @@ public class StockDto {
         dto.changePrice = stock.getChangePrice();
         dto.volume = stock.getVolume();
         dto.tradingValue = stock.getTradingValue();
+        dto.marketSession = stock.getMarketSession();
         dto.ranking = stock.getRanking();
         dto.high52Week = stock.getHigh52Week();
         dto.per = stock.getPer();

@@ -13,7 +13,7 @@ server:
 
 scheduler:
   stock-update:
-    cron: "0 0 9-20 * * MON-FRI"   # 평일 9~20시 매시 정각 (프리장 포함)
+    cron: "0 0 8-20 * * MON-FRI"   # 평일 8~20시 매시 정각 (넥스트레이드 프리장 08시 ~ 애프터마켓 20시)
 
 logging:
   level:

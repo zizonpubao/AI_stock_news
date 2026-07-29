@@ -1,9 +1,12 @@
 import { formatTradingValue } from '../api/stockApi';
 
+const SESSION_LABEL = { PRE: '🌅 프리장', AFTER: '🌙 애프터마켓' };
+
 export default function StockCard({ stock, rank, selected, onClick }) {
   const isUp = stock.changeRate && !stock.changeRate.startsWith('-');
   // 한국식: 상승=빨강, 하락=파랑
   const changeColor = isUp ? 'var(--red)' : 'var(--blue)';
+  const sessionLabel = SESSION_LABEL[stock.marketSession];
 
   const Badge = ({ label, value }) => (
     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border)] text-slate-400">
@@ -62,6 +65,11 @@ export default function StockCard({ stock, rank, selected, onClick }) {
                 <span className="font-mono text-sm font-semibold" style={{ color: changeColor }}>
                   {isUp ? '▲' : '▼'} {changeRateDisplay}
                 </span>
+                {sessionLabel && (
+                  <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-[var(--border)] text-slate-300">
+                    {sessionLabel}
+                  </span>
+                )}
               </div>
               <span className="text-[13px] font-mono text-white">
                 {changePriceDisplay}
