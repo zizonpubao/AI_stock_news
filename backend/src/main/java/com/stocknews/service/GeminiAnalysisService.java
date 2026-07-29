@@ -14,7 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.util.retry.Retry;
 
+import java.time.Duration;
 import java.util.*;
 
 @Slf4j
@@ -55,12 +57,20 @@ public class GeminiAnalysisService {
                     "temperature", 0.5
             ));
 
+            // Gemini 는 과부하 시 503/429 를 자주 반환 → 즉시 더미로 떨어지지 않고 백오프 재시도
             String response = client.post()
                     .uri(urlWithKey)
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .retryWhen(Retry.backoff(4, Duration.ofSeconds(3))
+                            .maxBackoff(Duration.ofSeconds(20))
+                            .filter(ex -> ex instanceof WebClientResponseException w
+                                    && (w.getStatusCode().is5xxServerError()
+                                        || w.getStatusCode().value() == 429))
+                            .doBeforeRetry(rs -> log.warn("Gemini 재시도 {}회차 (사유: {})",
+                                    rs.totalRetries() + 1, rs.failure().getMessage())))
+                    .block(Duration.ofSeconds(120));
 
             JsonNode root = objectMapper.readTree(response);
 
