@@ -33,6 +33,12 @@ public class GeminiAnalysisService {
     @Value("${gemini.api.url}")
     private String geminiApiUrl;
 
+    // 과부하(503) 시 순서대로 폴백할 모델들. 앞이 실패하면 다음 모델로 자동 전환.
+    @Value("${gemini.api.models:gemini-2.5-flash,gemini-2.0-flash,gemini-1.5-flash}")
+    private String[] geminiModels;
+
+    private static final String MODEL_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
+
     @Transactional
     public void analyzeAllStocks(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap) {
         log.info("Gemini AI 일괄 분석 시작 - 총 {}개 종목 (API 1회 호출)", stocks.size());
@@ -40,67 +46,64 @@ public class GeminiAnalysisService {
         String prompt = buildBatchPrompt(stocks, newsMap);
         log.debug("일괄 프롬프트 길이: {} chars", prompt.length());
 
-        try {
-            String urlWithKey = geminiApiUrl + "?key=" + geminiApiKey;
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
+        requestBody.put("generationConfig", Map.of("maxOutputTokens", 16000, "temperature", 0.5));
 
-            WebClient client = WebClient.builder()
-                    .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                    .codecs(cfg -> cfg.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
-                    .build();
-
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("contents", List.of(
-                    Map.of("parts", List.of(Map.of("text", prompt)))
-            ));
-            requestBody.put("generationConfig", Map.of(
-                    "maxOutputTokens", 16000,
-                    "temperature", 0.5
-            ));
-
-            // Gemini 는 과부하 시 503/429 를 자주 반환 → 즉시 더미로 떨어지지 않고 백오프 재시도
-            String response = client.post()
-                    .uri(urlWithKey)
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .retryWhen(Retry.backoff(4, Duration.ofSeconds(3))
-                            .maxBackoff(Duration.ofSeconds(20))
-                            .filter(ex -> ex instanceof WebClientResponseException w
-                                    && (w.getStatusCode().is5xxServerError()
-                                        || w.getStatusCode().value() == 429))
-                            .doBeforeRetry(rs -> log.warn("Gemini 재시도 {}회차 (사유: {})",
-                                    rs.totalRetries() + 1, rs.failure().getMessage())))
-                    .block(Duration.ofSeconds(120));
-
-            JsonNode root = objectMapper.readTree(response);
-
-            // finishReason 확인 (STOP이 아니면 응답이 잘린 것)
-            String finishReason = root.path("candidates").get(0).path("finishReason").asText();
-            log.info("Gemini finishReason: {}", finishReason);
-            if (!"STOP".equals(finishReason)) {
-                log.warn("Gemini 응답이 완전하지 않을 수 있음 (finishReason={})", finishReason);
+        // 모델 폴백: 앞 모델이 과부하(503 등)면 다음 모델로 자동 전환
+        for (String model : geminiModels) {
+            try {
+                String fullText = callGemini(model.trim(), requestBody);
+                log.info("Gemini 분석 성공 (모델: {}, 응답 {}자)", model.trim(), fullText.length());
+                parseAndSave(fullText, stocks);
+                return;
+            } catch (Exception e) {
+                log.warn("Gemini 모델 '{}' 실패 → 다음 모델 시도. 사유: {}", model.trim(), e.getMessage());
             }
-
-            // parts 배열 전체를 이어붙이기 (긴 응답은 여러 parts로 분할될 수 있음)
-            JsonNode parts = root.path("candidates").get(0).path("content").path("parts");
-            StringBuilder sb = new StringBuilder();
-            for (JsonNode part : parts) {
-                sb.append(part.path("text").asText());
-            }
-            String fullText = sb.toString();
-
-            log.info("Gemini 일괄 응답 수신 완료 (응답 길이: {} chars)", fullText.length());
-            log.debug("Gemini 응답 원문:\n{}", fullText);
-
-            parseAndSave(fullText, stocks);
-
-        } catch (WebClientResponseException e) {
-            log.error("Gemini API 오류: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
-            saveDummyForAll(stocks);
-        } catch (Exception e) {
-            log.error("Gemini 일괄 분석 실패: {}", e.getMessage());
-            saveDummyForAll(stocks);
         }
+        log.error("모든 Gemini 모델 실패 → 더미 분석 저장");
+        saveDummyForAll(stocks);
+    }
+
+    /** 단일 모델 호출 (과부하 503/429 시 백오프 재시도). 실패 시 예외 던짐. */
+    private String callGemini(String model, Map<String, Object> requestBody) {
+        String url = MODEL_BASE + model + ":generateContent?key=" + geminiApiKey;
+
+        WebClient client = WebClient.builder()
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .codecs(cfg -> cfg.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
+                .build();
+
+        String response = client.post()
+                .uri(url)
+                .bodyValue(requestBody)
+                .retrieve()
+                .bodyToMono(String.class)
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(2))
+                        .maxBackoff(Duration.ofSeconds(10))
+                        .filter(ex -> ex instanceof WebClientResponseException w
+                                && (w.getStatusCode().is5xxServerError()
+                                    || w.getStatusCode().value() == 429))
+                        .doBeforeRetry(rs -> log.warn("  [{}] 재시도 {}회차", model, rs.totalRetries() + 1)))
+                .block(Duration.ofSeconds(90));
+
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(response);
+        } catch (Exception e) {
+            throw new RuntimeException("응답 파싱 실패: " + e.getMessage());
+        }
+
+        String finishReason = root.path("candidates").path(0).path("finishReason").asText("");
+        JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode part : parts) sb.append(part.path("text").asText());
+        String fullText = sb.toString();
+
+        if (fullText.isBlank()) {
+            throw new RuntimeException("빈 응답 (finishReason=" + finishReason + ")");
+        }
+        return fullText;
     }
 
     private String buildBatchPrompt(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap) {
