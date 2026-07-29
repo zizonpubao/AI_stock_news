@@ -24,7 +24,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:5173"})
+// CORS 는 CorsConfig(글로벌) 에서 처리 — localhost + *.vercel.app 허용.
+// 여기 @CrossOrigin 을 두면 글로벌 설정을 덮어써 Vercel 이 차단되므로 제거함.
 public class StockController {
 
     private final StockRepository stockRepository;
