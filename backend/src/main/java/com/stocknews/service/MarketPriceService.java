@@ -84,11 +84,15 @@ public class MarketPriceService {
 
     private PriceInfo parse(JsonNode d) {
         JsonNode ov = d.path("overMarketPriceInfo");
-        boolean overOpen = ov.isObject() && "OPEN".equals(ov.path("overMarketStatus").asText());
+        String type = ov.path("tradingSessionType").asText("");   // PRE_MARKET / REGULAR_MARKET / AFTER_MARKET
+        // 주의: overMarketPriceInfo 는 정규장 시간에도 OPEN(tradingSessionType=REGULAR_MARKET)으로 온다.
+        // 실제 시간외(프리장/애프터마켓)일 때만 시간외 가격/배지를 사용한다.
+        boolean isExtended = ov.isObject()
+                && "OPEN".equals(ov.path("overMarketStatus").asText())
+                && (type.startsWith("PRE") || type.startsWith("AFTER"));
 
         String price, changePrice, changeRate, session;
-        if (overOpen) {
-            String type = ov.path("tradingSessionType").asText();     // PRE_MARKET / AFTER_MARKET
+        if (isExtended) {
             session = type.startsWith("PRE") ? "PRE" : "AFTER";
             String dir = ov.path("compareToPreviousPrice").path("code").asText();
             price = ov.path("overPrice").asText();
