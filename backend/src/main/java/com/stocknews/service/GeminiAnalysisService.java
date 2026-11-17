@@ -2,6 +2,7 @@ package com.stocknews.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stocknews.entity.AnalysisStatus;
 import com.stocknews.entity.NewsArticle;
 import com.stocknews.entity.Stock;
 import com.stocknews.repository.StockRepository;
@@ -11,7 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
@@ -30,16 +30,21 @@ public class GeminiAnalysisService {
     @Value("${gemini.api.key}")
     private String geminiApiKey;
 
-    @Value("${gemini.api.url}")
-    private String geminiApiUrl;
-
     // 과부하(503) 시 순서대로 폴백할 모델들. 앞이 실패하면 다음 모델로 자동 전환.
     @Value("${gemini.api.models:gemini-2.5-flash,gemini-2.0-flash,gemini-1.5-flash}")
     private String[] geminiModels;
 
     private static final String MODEL_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
+    private static final String API_KEY_HEADER = "x-goog-api-key";
 
-    @Transactional
+    /**
+     * 10개 종목을 한 번의 API 호출로 분석해 저장한다.
+     *
+     * 이 메서드에는 @Transactional 을 걸지 않는다. 외부 AI 호출은 재시도·모델 폴백까지 수 분이 걸릴 수 있는데,
+     * 그 시간 동안 DB 커넥션을 붙잡지 않기 위해서다. 저장은 종목별 짧은 UPDATE 로 처리한다.
+     *
+     * 실패 시 그럴듯한 대체 문구를 저장하지 않는다. 분석을 비우고 상태를 FAILED 로 남긴다.
+     */
     public void analyzeAllStocks(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap) {
         log.info("Gemini AI 일괄 분석 시작 - 총 {}개 종목 (API 1회 호출)", stocks.size());
 
@@ -52,25 +57,30 @@ public class GeminiAnalysisService {
 
         // 모델 폴백: 앞 모델이 과부하(503 등)면 다음 모델로 자동 전환
         for (String model : geminiModels) {
+            String fullText;
             try {
-                String fullText = callGemini(model.trim(), requestBody);
-                log.info("Gemini 분석 성공 (모델: {}, 응답 {}자)", model.trim(), fullText.length());
-                parseAndSave(fullText, stocks);
-                return;
+                fullText = callGemini(model.trim(), requestBody);
             } catch (Exception e) {
                 log.warn("Gemini 모델 '{}' 실패 → 다음 모델 시도. 사유: {}", model.trim(), e.getMessage());
+                continue;
             }
+            log.info("Gemini 분석 성공 (모델: {}, 응답 {}자)", model.trim(), fullText.length());
+            saveAnalyses(fullText, stocks);
+            return;
         }
-        log.error("모든 Gemini 모델 실패 → 더미 분석 저장");
-        saveDummyForAll(stocks);
+        log.error("모든 Gemini 모델 실패 → 전 종목 분석 상태를 FAILED 로 기록 (대체 문구 저장 안 함)");
+        markAllFailed(stocks);
     }
 
     /** 단일 모델 호출 (과부하 503/429 시 백오프 재시도). 실패 시 예외 던짐. */
     private String callGemini(String model, Map<String, Object> requestBody) {
-        String url = MODEL_BASE + model + ":generateContent?key=" + geminiApiKey;
+        // API 키는 URL 쿼리(?key=)가 아니라 헤더로 보낸다.
+        // URL 에 넣으면 호출 실패 시 예외 메시지·접근 로그에 키가 그대로 남는다.
+        String url = MODEL_BASE + model + ":generateContent";
 
         WebClient client = WebClient.builder()
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .defaultHeader(API_KEY_HEADER, geminiApiKey)
                 .codecs(cfg -> cfg.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
                 .build();
 
@@ -108,7 +118,7 @@ public class GeminiAnalysisService {
 
     private String buildBatchPrompt(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap) {
         StringBuilder sb = new StringBuilder();
-        sb.append("아래는 오늘 한국 주식시장 급상승 종목과 관련 뉴스 목록입니다.\n");
+        sb.append("아래는 오늘 한국 주식시장 검색 상위(인기검색) 종목과 관련 뉴스 목록입니다.\n");
         sb.append("각 종목 분석은 반드시 정확히 '[종목1]', '[종목2]', ..., '[종목10]' 형식의 태그로 시작해야 합니다.\n");
         sb.append("태그 형식을 절대 바꾸지 마세요. 오타 없이 정확히 작성해주세요.\n\n");
 
@@ -143,63 +153,67 @@ public class GeminiAnalysisService {
     }
 
     /**
-     * [종목N] 태그로 응답을 분리해서 각 종목에 저장
-     * 오타 방어: indexOf로 각 태그 위치를 먼저 모두 찾은 뒤 슬라이싱
+     * AI 응답을 '[종목N]' 태그 기준으로 잘라 종목 순번(0부터) → 분석 텍스트로 돌려준다.
+     * 태그가 없거나 내용이 비어 있는 종목은 결과에 포함하지 않는다(호출 측에서 FAILED 처리).
+     * DB·네트워크에 의존하지 않는 순수 함수라 단위 테스트로 검증한다.
      */
-    private void parseAndSave(String fullText, List<Stock> stocks) {
+    static Map<Integer, String> splitByTags(String fullText, int stockCount) {
+        Map<Integer, String> result = new LinkedHashMap<>();
+        if (fullText == null) return result;
+
         // 1단계: 각 [종목N] 태그의 시작 위치를 모두 찾기
-        int[] positions = new int[stocks.size()];
-        for (int i = 0; i < stocks.size(); i++) {
-            String tag = "[종목" + (i + 1) + "]";
-            positions[i] = fullText.indexOf(tag);
-            if (positions[i] == -1) {
-                log.warn("태그 미발견: {} → 더미 저장", tag);
-            }
+        int[] positions = new int[stockCount];
+        for (int i = 0; i < stockCount; i++) {
+            positions[i] = fullText.indexOf(tagOf(i));
         }
 
-        // 2단계: 위치 기반으로 각 종목 텍스트 슬라이싱
-        for (int i = 0; i < stocks.size(); i++) {
-            Stock stock = stocks.get(i);
-
-            if (positions[i] == -1) {
-                stock.setAiAnalysis(getDummyAnalysis());
-                stockRepository.save(stock);
-                continue;
-            }
-
-            // 태그 길이만큼 건너뛰기
-            String tag = "[종목" + (i + 1) + "]";
-            int start = positions[i] + tag.length();
-
-            // 다음 태그 위치 찾기 (없으면 끝까지)
+        // 2단계: 위치 기반으로 각 종목 텍스트 슬라이싱 (다음에 존재하는 태그 직전까지)
+        for (int i = 0; i < stockCount; i++) {
+            if (positions[i] == -1) continue;
+            int start = positions[i] + tagOf(i).length();
             int end = fullText.length();
-            for (int j = i + 1; j < stocks.size(); j++) {
+            for (int j = i + 1; j < stockCount; j++) {
                 if (positions[j] != -1) {
                     end = positions[j];
                     break;
                 }
             }
-
+            if (end < start) continue; // 태그 순서가 뒤바뀐 비정상 응답
             String analysis = fullText.substring(start, end).trim();
+            if (!analysis.isEmpty()) result.put(i, analysis);
+        }
+        return result;
+    }
 
-            stock.setAiAnalysis(analysis);
-            stockRepository.save(stock);
+    private static String tagOf(int index) {
+        return "[종목" + (index + 1) + "]";
+    }
+
+    private void saveAnalyses(String fullText, List<Stock> stocks) {
+        Map<Integer, String> analyses = splitByTags(fullText, stocks.size());
+        for (int i = 0; i < stocks.size(); i++) {
+            Stock stock = stocks.get(i);
+            String analysis = analyses.get(i);
+            if (analysis == null) {
+                log.warn("응답에서 {} 분석을 찾지 못함: {} → FAILED 기록", tagOf(i), stock.getName());
+                apply(stock, null, AnalysisStatus.FAILED);
+                continue;
+            }
+            apply(stock, analysis, AnalysisStatus.SUCCESS);
             log.info("  분석 저장 완료: {} ({}자)", stock.getName(), analysis.length());
         }
     }
 
-    private void saveDummyForAll(List<Stock> stocks) {
-        log.warn("전체 더미 분석 저장");
+    private void markAllFailed(List<Stock> stocks) {
         for (Stock stock : stocks) {
-            stock.setAiAnalysis(getDummyAnalysis());
-            stockRepository.save(stock);
+            apply(stock, null, AnalysisStatus.FAILED);
         }
     }
 
-    private String getDummyAnalysis() {
-        return "📈 주요 이슈\n- 실적 개선 기대감으로 외국인 및 기관 순매수 유입\n- 업황 개선 신호 포착\n\n"
-                + "💡 투자 관점 요약\n- 긍정: 단기 모멘텀 강화, 거래량 동반 상승\n- 주의: 단기 급등에 따른 차익실현 가능성\n\n"
-                + "⚠️ 리스크 요인\n- 단기: 급등 이후 조정 가능성\n- 중기: 글로벌 경기 불확실성\n\n"
-                + "* 본 분석은 AI 자동 생성 참고 자료이며, 투자 권유가 아닙니다.";
+    private void apply(Stock stock, String analysis, AnalysisStatus status) {
+        stockRepository.updateAnalysis(stock.getId(), analysis, status);
+        // 호출 측이 들고 있는 객체도 같은 값으로 맞춰 둔다
+        stock.setAiAnalysis(analysis);
+        stock.setAnalysisStatus(status);
     }
 }

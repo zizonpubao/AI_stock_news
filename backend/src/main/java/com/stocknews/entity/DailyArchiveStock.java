@@ -40,6 +40,11 @@ public class DailyArchiveStock {
     @Column(columnDefinition = "TEXT")
     private String aiAnalysis;
 
+    // 아카이브 시점의 분석 상태. 기존 행(컬럼 추가 전)은 null
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private AnalysisStatus analysisStatus;
+
     @OneToMany(mappedBy = "archiveStock", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<DailyArchiveNews> news = new ArrayList<>();
 }

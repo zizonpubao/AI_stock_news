@@ -12,19 +12,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-// 상단 import 추가
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import reactor.netty.http.client.HttpClient;
-import javax.net.ssl.SSLException;
-
 
 @Slf4j
 @Service
@@ -56,26 +50,12 @@ public class NewsService {
         try {
             String exactQuery = "\"" + stock.getName() + "\"";  // 1차: 정확히 일치 검색
 
-            HttpClient httpClient = HttpClient.create()
-                    .secure(sslSpec -> {
-                        try {
-                            sslSpec.sslContext(
-                                    SslContextBuilder.forClient()
-                                            .trustManager(InsecureTrustManagerFactory.INSTANCE)
-                                            .build()
-                            );
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
-
+            // TLS 인증서 검증은 JDK 기본 신뢰 저장소로 수행한다.
+            // (이전에는 모든 인증서를 신뢰하도록 검증을 꺼 두어, 중간자 공격 시 API 시크릿이 노출될 수 있었다.)
             WebClient client = WebClient.builder()
                     .baseUrl(newsUrl)
-                    .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .defaultHeader("X-Naver-Client-Id", clientId)
                     .defaultHeader("X-Naver-Client-Secret", clientSecret)
-                    .defaultHeader("Referer", "https://web-production-fffaa.up.railway.app")
-                    .defaultHeader("Origin", "https://web-production-fffaa.up.railway.app")
                     .build();
 
             String response = client.get()
@@ -86,7 +66,7 @@ public class NewsService {
                             .build())
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(Duration.ofSeconds(10)); // 응답이 없을 때 무한 대기하지 않도록 제한
 
             JsonNode root = objectMapper.readTree(response);
             JsonNode items = root.get("items");

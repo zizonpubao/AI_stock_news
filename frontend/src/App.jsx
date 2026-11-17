@@ -4,8 +4,18 @@ import StockCard from './components/StockCard';
 import NewsPanel from './components/NewsPanel';
 import {
   fetchTop10, fetchStockNews,
-  fetchArchiveDates, fetchArchiveStocks, fetchArchiveStockNews,
+  fetchArchiveDates, fetchArchiveStocks, fetchArchiveStockNews, fetchHealth,
 } from './api/stockApi';
+
+// "14:00 기준" — 오늘 수집분이 아니면 날짜까지 붙여 오래된 데이터임이 드러나게 한다
+function formatCollectedAt(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const time = d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  const isSameDay = d.toDateString() === new Date().toDateString();
+  return isSameDay ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
 
 function SkeletonCard() {
   return (
@@ -37,13 +47,18 @@ export default function App() {
   const [archiveDates, setArchiveDates] = useState([]);
   const [selectedDate, setSelectedDate] = useState('today'); // 'today' | 'YYYY-MM-DD'
 
+  const [health, setHealth] = useState(null); // 서버의 수집 상태 (마지막 시도 성공 여부 등)
+
   const isToday = selectedDate === 'today';
+  // 서버는 응답하지만 가장 최근 수집 시도가 실패한 상태
+  const collectFailed = isToday && !error && health?.lastAttemptOk === false;
   // 아카이브 모드일 땐 아카이브 뉴스 API 사용
   const newsFetcher = isToday ? fetchStockNews : fetchArchiveStockNews;
 
   // 아카이브 가능한 날짜 목록 (최초 1회)
   useEffect(() => {
     fetchArchiveDates().then(setArchiveDates).catch(() => {});
+    fetchHealth().then(setHealth).catch(() => {});
   }, []);
 
   // 선택 날짜에 따라 종목 로드 (오늘=실시간 / 과거=아카이브)
@@ -78,13 +93,23 @@ export default function App() {
           </div>
         )}
 
+        {/* 수집 실패 안내: 오래된 데이터를 최신처럼 보이게 두지 않는다 */}
+        {collectFailed && (
+          <div className="mb-6 rounded-xl border border-[rgba(255,215,0,0.4)] bg-[rgba(255,215,0,0.05)] px-4 py-3 text-sm text-[var(--yellow)] font-mono">
+            ⚠️ 최근 종목 수집에 실패했습니다.{' '}
+            {stocks.length > 0
+              ? `아래는 마지막으로 정상 수집된 데이터입니다 (${formatCollectedAt(stocks[0]?.updatedAt) ?? '시각 미상'} 기준).`
+              : '표시할 수집 데이터가 없습니다.'}
+          </div>
+        )}
+
         {/* 모바일 탭 네비게이션 */}
         <div className="flex md:hidden mb-4 rounded-lg overflow-hidden border border-[var(--border)]">
           <button
             onClick={() => setMobileView('list')}
             className={`flex-1 py-2.5 text-sm font-mono transition-colors ${mobileView === 'list' ? 'bg-[var(--accent)] text-[var(--bg)]' : 'text-slate-400'}`}
           >
-            급상승 TOP 10
+            검색 TOP 10
           </button>
           <button
             onClick={() => setMobileView('detail')}
@@ -128,7 +153,7 @@ export default function App() {
               {stocks.length > 0 && (
                 <span className="text-[10px] font-mono text-slate-600">
                   {isToday
-                    ? `${new Date(stocks[0]?.updatedAt)?.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 기준`
+                    ? `${formatCollectedAt(stocks[0]?.updatedAt) ?? '-'} 기준`
                     : `${selectedDate} 종가`}
                 </span>
               )}
@@ -148,6 +173,12 @@ export default function App() {
                     </div>
                   ))
               }
+              {!loading && !error && stocks.length === 0 && (
+                <div className="rounded-xl border border-[var(--border)] p-4 text-xs font-mono text-slate-500 leading-relaxed"
+                  style={{ background: 'var(--card)' }}>
+                  {isToday ? '수집된 종목 데이터가 없습니다.' : '이 날짜에 저장된 데이터가 없습니다.'}
+                </div>
+              )}
             </div>
           </div>
 

@@ -203,6 +203,18 @@ export default function NewsPanel({ stock, fetchNews = fetchStockNews }) {
         </div>
       )}
 
+      {/* AI 분석 실패: 대체 문구를 보여주지 않고 실패 사실을 그대로 알린다 */}
+      {!data?.stock?.aiAnalysis && data?.stock?.analysisStatus === 'FAILED' && (
+        <div className="mb-5 fade-up rounded-xl border border-[rgba(255,215,0,0.4)] bg-[rgba(255,215,0,0.05)] px-4 py-3"
+          style={{ animationDelay: '100ms' }}>
+          <p className="text-xs font-mono text-[var(--yellow)]">⚠️ AI 분석을 생성하지 못했습니다</p>
+          <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+            외부 AI 서비스 응답에 실패해 이번 갱신에서는 분석이 없습니다. 다음 정기 갱신 때 다시 시도합니다.
+            아래 뉴스는 정상 수집된 내용입니다.
+          </p>
+        </div>
+      )}
+
       {/* 뉴스 목록 */}
       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
         <div className="flex items-center gap-2 mb-3 fade-up" style={{ animationDelay: '150ms' }}>

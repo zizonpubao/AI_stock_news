@@ -13,9 +13,11 @@ import org.springframework.format.annotation.DateTimeFormat;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -56,11 +58,16 @@ public class StockController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /** 수동 갱신 (관리용, X-Admin-Token 필요 — AdminTokenInterceptor) */
     @PostMapping("/stocks/refresh")
     public ResponseEntity<Map<String, String>> refresh() {
         log.info("수동 갱신 요청");
-        new Thread(stockScheduler::updateAllStocks).start();
-        return ResponseEntity.ok(Map.of("message", "갱신 시작됨. 잠시 후 다시 조회해주세요."));
+        if (!stockScheduler.startUpdateAsync()) {
+            // 이미 갱신이 돌고 있으면 중복 실행하지 않는다 (크롤링·AI 호출 중복 방지)
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("message", "이미 갱신이 진행 중입니다."));
+        }
+        return ResponseEntity.accepted().body(Map.of("message", "갱신 시작됨. 잠시 후 다시 조회해주세요."));
     }
 
     @GetMapping("/market/indices")
@@ -91,7 +98,7 @@ public class StockController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    /** 오늘 데이터 수동 아카이브 (테스트/관리용) */
+    /** 오늘 데이터 수동 아카이브 (관리용, X-Admin-Token 필요 — AdminTokenInterceptor) */
     @PostMapping("/archive/run")
     public ResponseEntity<Map<String, Object>> runArchive() {
         int count = archiveService.archiveToday();
@@ -100,10 +107,14 @@ public class StockController {
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
-        return ResponseEntity.ok(Map.of(
-                "status", "UP",
-                "stockCount", stockRepository.count(),
-                "newsCount", newsRepository.count()
-        ));
+        // 수집 상태를 함께 내보낸다: 서버는 떠 있지만 수집이 실패하고 있는 상황을 구분하기 위함
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "UP");
+        body.put("stockCount", stockRepository.count());
+        body.put("newsCount", newsRepository.count());
+        body.put("lastCollectedAt", stockRepository.findLastCollectedAt()); // 마지막 수집 성공 시각 (없으면 null)
+        body.put("lastAttemptAt", stockScheduler.getLastAttemptAt());       // 마지막 수집 시도 시각
+        body.put("lastAttemptOk", stockScheduler.getLastAttemptOk());       // 마지막 시도 성공 여부
+        return ResponseEntity.ok(body);
     }
 }

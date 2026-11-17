@@ -7,6 +7,7 @@ import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.MarketPriceService;
 import com.stocknews.service.NewsService;
 import com.stocknews.service.StockCrawlerService;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -15,9 +16,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Component
@@ -30,6 +33,13 @@ public class StockScheduler {
     private final GeminiAnalysisService geminiAnalysisService;
     private final ArchiveService archiveService;
     private final MarketPriceService marketPriceService;
+
+    // 업데이트 사이클 중복 실행 방지 플래그
+    private final AtomicBoolean running = new AtomicBoolean(false);
+
+    // 가장 최근 수집 시도의 시각과 성공 여부 (서버 시작 후 첫 시도 전에는 null)
+    @Getter private volatile LocalDateTime lastAttemptAt;
+    @Getter private volatile Boolean lastAttemptOk;
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
@@ -45,7 +55,7 @@ public class StockScheduler {
             log.info("휴장일로 판단 - 업데이트 스킵");
             return;
         }
-        log.info("스케줄러 실행 - 급상승 종목 업데이트");
+        log.info("스케줄러 실행 - 검색 상위 종목 업데이트");
         updateAllStocks();
     }
 
@@ -64,14 +74,53 @@ public class StockScheduler {
         }
     }
 
+    /**
+     * 수집 → 뉴스 → AI 분석 한 사이클을 실행한다.
+     * 스케줄러·서버 시작·수동 갱신이 겹쳐도 동시에 두 번 돌지 않도록 막는다.
+     * (동시에 돌면 종목 테이블을 서로 지우고, AI 호출도 중복으로 나간다.)
+     */
     public void updateAllStocks() {
+        if (!running.compareAndSet(false, true)) {
+            log.warn("이미 업데이트가 진행 중 - 이번 실행은 건너뜀");
+            return;
+        }
         try {
-            // 1단계: 급상승 TOP 10 크롤링
+            runUpdateCycle();
+        } finally {
+            running.set(false);
+        }
+    }
+
+    /** 수동 갱신용: 별도 스레드에서 한 사이클 실행. 이미 진행 중이면 시작하지 않고 false. */
+    public boolean startUpdateAsync() {
+        if (!running.compareAndSet(false, true)) return false;
+        Thread worker = new Thread(() -> {
+            try {
+                runUpdateCycle();
+            } finally {
+                running.set(false);
+            }
+        }, "manual-refresh");
+        worker.setDaemon(true);
+        worker.start();
+        return true;
+    }
+
+    private void runUpdateCycle() {
+        lastAttemptAt = LocalDateTime.now();
+        boolean collected = false;
+        try {
+            // 1단계: 검색 상위 TOP 10 크롤링
             List<Stock> stocks = stockCrawlerService.crawlAndSaveTop10();
             if (stocks.isEmpty()) {
-                log.warn("수집된 종목 없음 - 업데이트 중단");
+                // 수집 실패 시 임의 데이터를 만들지 않는다. 직전 수집 결과를 그대로 유지하고,
+                // 실패했다는 사실은 /api/health 와 화면 안내로 드러낸다.
+                lastAttemptOk = false;
+                log.error("종목 수집 실패 - 직전 데이터 유지, 이번 업데이트 중단");
                 return;
             }
+            collected = true;
+            lastAttemptOk = true;
 
             // 2단계: 각 종목 뉴스 수집 (개별 수집)
             Map<Long, List<NewsArticle>> newsMap = new HashMap<>();
@@ -92,6 +141,8 @@ public class StockScheduler {
             log.info("전체 업데이트 완료 - {}개 종목", stocks.size());
 
         } catch (Exception e) {
+            // 수집 단계에서 예외가 난 경우만 수집 실패로 기록한다 (뉴스·AI 단계 실패는 종목별 상태로 남는다)
+            if (!collected) lastAttemptOk = false;
             log.error("업데이트 중 오류 발생: {}", e.getMessage());
         }
     }

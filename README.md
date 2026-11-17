@@ -2,9 +2,9 @@
 
 # 📈 StockPulse
 
-### 실시간 급상승 종목 뉴스 AI 분석 서비스
+### 실시간 검색 상위 종목 뉴스 AI 분석 서비스
 
-네이버 금융의 **실시간 검색 급상승 TOP 10** 종목을 자동으로 수집하고,
+네이버 증권의 **실시간 검색 상위 TOP 10** 종목을 자동으로 수집하고,
 관련 뉴스와 **Google Gemini AI 투자 분석**을 한 화면에서 보여주는 웹 서비스입니다.
 
 <br/>
@@ -32,7 +32,7 @@
 
 **StockPulse는 이 과정을 자동화합니다.**
 
-> 급상승 종목 크롤링 → 관련 뉴스 수집 → AI가 이슈·투자관점·리스크를 요약
+> 검색 상위 종목 수집 → 관련 뉴스 수집 → AI가 이슈·투자관점·리스크를 요약
 > → 한 화면에서 확인 → 날짜별로 기록까지 보관
 
 평일 8\~20시(넥스트레이드 프리장\~애프터마켓) 매 정각 자동 갱신되며, 매 거래일 **종가(16시)** 데이터는 별도로 아카이브되어 과거 날짜를 골라 다시 볼 수 있습니다.
@@ -46,7 +46,7 @@
 <div align="center">
   <img src="docs/img/hero.png" width="92%" alt="StockPulse 대시보드"/>
   <br/>
-  <sub>한 화면에서 급상승 TOP10 · AI 투자 분석 · 관련 뉴스 · 코스피/코스닥 지수를 확인</sub>
+  <sub>한 화면에서 검색 상위 TOP10 · AI 투자 분석 · 관련 뉴스 · 코스피/코스닥 지수를 확인</sub>
 </div>
 
 ---
@@ -57,7 +57,7 @@
 
 | # | 기능 | 요약 |
 |---|------|------|
-| 1 | 🔥 실시간 급상승 TOP 10 | 인기검색 종목을 매 정각 크롤링 (거래대금·PER·52주고 등) |
+| 1 | 🔥 실시간 검색 상위 TOP 10 | 인기검색 종목을 매 정각 수집 (거래대금·PER·52주고 등) |
 | 2 | 🤖 Gemini AI 투자 분석 | 이슈 / 투자관점 / 리스크 3섹션 자동 요약 |
 | 3 | 📰 관련 뉴스 자동 수집 | 48h 이내·최대 5건 선별 |
 | 4 | 📊 코스피·코스닥 지수 | 상단 실시간 지수 |
@@ -67,11 +67,14 @@
 
 <br/>
 
-### 🔥 1. 실시간 급상승 TOP 10
+### 🔥 1. 실시간 검색 상위 TOP 10
 
 <div align="center"><img src="docs/gifs/01-top10.gif" width="90%" alt="종목 카드 클릭하며 둘러보기"/></div>
 
-화면 왼쪽에 **네이버 금융 인기검색 급상승 종목 1\~10위**가 카드로 나열됩니다. 각 카드는 종목 하나에 대한 요약 대시보드예요.
+화면 왼쪽에 **네이버 증권 검색 상위(인기검색) 종목 1\~10위**가 카드로 나열됩니다. 각 카드는 종목 하나에 대한 요약 대시보드예요.
+
+> 종목 목록과 상세 지표는 네이버 모바일 증권이 내려주는 JSON 응답을 읽어 수집합니다. 네이버가 문서로 공개한 Open API 가 아니어서 응답 구조가 예고 없이 바뀔 수 있습니다.
+> 수집에 실패하면 임의 데이터를 만들지 않고 직전 수집분을 유지하며, 화면과 `/api/health` 에 실패 사실을 표시합니다.
 
 **카드에 담기는 정보** (예: `#1 SK하이닉스`)
 - **현재가 / 등락률 / 전일대비** — `₩1,373,000 · ▼ -11.42% · -177,000`
@@ -136,7 +139,7 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 
 ### ⏱ 자동 갱신
 
-- 평일 **8\~20시(프리장 08시\~애프터마켓 20시) 매 정각** 자동 크롤링·분석 (KST), 공휴일 자동 휴장
+- 평일 **8\~20시(프리장 08시\~애프터마켓 20시) 매 정각** 자동 수집·분석 (KST), 공휴일 자동 휴장
 - 서버 타임존을 `Asia/Seoul` 로 고정해 표시 시각이 한국시간과 일치
 
 ---
@@ -149,7 +152,7 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 |------|------|
 | **Frontend** | React 18 (CRA), Tailwind CSS v3, Axios |
 | **Backend** | Java 17, Spring Boot 3.2, Spring Data JPA, Spring Scheduler |
-| **크롤링 / 외부 연동** | Jsoup(HTML 크롤링), Spring WebFlux WebClient |
+| **수집 / 외부 연동** | Jsoup(HTTP 호출 · JSON 수집), Spring WebFlux WebClient |
 | **Database** | H2 (로컬) / PostgreSQL — [Neon](https://neon.tech) (운영) |
 | **AI / 외부 API** | Google Gemini 2.5 Flash, 네이버 검색 API, 네이버 금융/지수 |
 | **Infra / 배포** | Docker, AWS EC2, Vercel |
@@ -164,7 +167,7 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 flowchart LR
     U["👤 사용자"] -->|HTTPS| V["▲ Vercel<br/>React SPA"]
     V -->|"/api 프록시<br/>(mixed-content 우회)"| E["🐳 AWS EC2<br/>Spring Boot (Docker)"]
-    E -->|크롤링| NF["네이버 금융<br/>급상승 TOP10"]
+    E -->|JSON 수집| NF["네이버 증권<br/>검색 상위 TOP10"]
     E -->|지수 조회| IDX["네이버 지수 API<br/>코스피/코스닥"]
     E -->|뉴스 검색| NN["네이버 검색 API"]
     E -->|AI 분석| G["Google Gemini<br/>2.5 Flash"]
@@ -180,7 +183,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    S["⏰ 스케줄러<br/>평일 8~20시 매 정각 (KST)"] --> C["1️⃣ 급상승 TOP10 크롤링"]
+    S["⏰ 스케줄러<br/>평일 8~20시 매 정각 (KST)"] --> C["1️⃣ 검색 상위 TOP10 수집"]
     C --> N["2️⃣ 종목별 뉴스 수집<br/>(48h 이내·최대 5건)"]
     N --> A["3️⃣ Gemini 일괄 AI 분석<br/>(10종목 1회 호출)"]
     A --> DB[("현재 스냅샷 저장<br/>stocks / news_articles")]
@@ -198,14 +201,14 @@ flowchart TD
 
 | Method | Endpoint | 설명 |
 |--------|----------|------|
-| `GET` | `/api/stocks/top10` | 급상승 TOP 10 종목 |
+| `GET` | `/api/stocks/top10` | 검색 상위 TOP 10 종목 |
 | `GET` | `/api/stocks/{id}/news` | 종목별 뉴스 + AI 분석 |
-| `POST` | `/api/stocks/refresh` | 수동 갱신 트리거 |
+| `POST` | `/api/stocks/refresh` | 수동 갱신 트리거 (관리용, `X-Admin-Token` 헤더 필요) |
 | `GET` | `/api/market/indices` | 코스피·코스닥 실시간 지수 |
 | `GET` | `/api/archive/dates` | 아카이브가 있는 날짜 목록 |
 | `GET` | `/api/archive/{date}/stocks` | 특정 날짜의 TOP10 |
 | `GET` | `/api/archive/stocks/{id}/news` | 아카이브 종목의 뉴스 + AI |
-| `POST` | `/api/archive/run` | 오늘 데이터 수동 아카이브 |
+| `POST` | `/api/archive/run` | 오늘 데이터 수동 아카이브 (관리용, `X-Admin-Token` 헤더 필요) |
 | `GET` | `/api/health` | 서버 상태 (종목/뉴스 개수) |
 
 ---
@@ -262,7 +265,7 @@ erDiagram
 ├── backend/                Spring Boot 3.2 (Java 17, Gradle)
 │   └── src/main/java/com/stocknews/
 │       ├── controller/     REST API
-│       ├── service/        크롤링 · 뉴스 · Gemini 분석 · 지수 · 아카이브
+│       ├── service/        종목 수집 · 뉴스 · Gemini 분석 · 지수 · 아카이브
 │       ├── scheduler/      정각 갱신 + 16:05 아카이브
 │       ├── entity/         Stock, NewsArticle, DailyArchiveStock/News
 │       └── repository/     Spring Data JPA
@@ -330,6 +333,7 @@ npm start   # http://localhost:3000
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 네이버 검색 API | EC2 `.env` / 로컬 `application-local.yml` |
 | `GEMINI_API_KEY` | Gemini 2.5 Flash | 동일 |
 | `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` | PostgreSQL(운영) | EC2 `.env` |
+| `ADMIN_TOKEN` | 관리용 API(수동 갱신·아카이브) 인증 토큰. 비우면 해당 API 차단 | EC2 `.env` |
 | `CORS_ALLOWED_ORIGINS` | 허용 오리진 | 선택 (기본: localhost + `*.vercel.app`) |
 | `REACT_APP_API_URL` | 프론트가 호출할 API 경로 | Vercel 환경변수 |
 
