@@ -38,6 +38,13 @@ public class Stock {
     @Column(length = 20)
     private AnalysisStatus analysisStatus = AnalysisStatus.PENDING;
 
+    // 분석 근거 정보. enum 이 아닌 일반 컬럼이다(운영 DB 의 enum CHECK 제약과 무관하게 값을 추가할 수 있도록).
+    // 기존 행(컬럼 추가 전)은 모두 null
+    @Column(length = 100) private String analysisModel;      // 실제로 응답한 모델 이름
+    private LocalDateTime analyzedAt;                        // 분석 저장 시각 (성공했을 때만)
+    @Column(length = 20) private String analysisSentiment;   // POSITIVE / NEUTRAL / NEGATIVE, 판단 불가면 null
+    @Column(length = 30) private String analysisFailReason;  // FAILED 일 때 사유 (AnalysisFailReason 이름)
+
     // 뉴스 수집 상태. 기존 행(컬럼 추가 전)은 null 일 수 있음
     @Enumerated(EnumType.STRING)
     @Column(length = 20)

@@ -18,8 +18,12 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -68,7 +72,7 @@ public class NewsService {
             String response = client.get()
                     .uri(uriBuilder -> uriBuilder
                             .queryParam("query", exactQuery)
-                            .queryParam("display", 20)
+                            .queryParam("display", 30) // 중복·48시간·종목명 필터 후에도 5건을 채우기 위해 20→30
                             .queryParam("sort", "sim")
                             .build())
                     .retrieve()
@@ -110,6 +114,9 @@ public class NewsService {
 
         ZonedDateTime cutoff = now.minusHours(48);
         List<NewsArticle> result = new ArrayList<>();
+        List<String> keptTitles = new ArrayList<>();   // 채택한 기사의 정규화 제목 (중복 비교용)
+        Set<String> keptLinks = new HashSet<>();
+        int duplicates = 0;
         for (JsonNode item : items) {
             if (result.size() >= 5) break;
 
@@ -127,14 +134,97 @@ public class NewsService {
                 continue;
             }
 
+            // 중복 제거: 같은 링크이거나 제목이 (거의) 같으면 먼저 나온 기사만 남긴다
+            String link = item.path("link").asText("");
+            String normalized = normalizeTitle(title, stockName);
+            if ((!link.isBlank() && keptLinks.contains(link)) || isDuplicateOfAny(normalized, keptTitles)) {
+                duplicates++;
+                log.debug("중복 기사 제외: {}", title);
+                continue;
+            }
+
             NewsArticle article = new NewsArticle();
             article.setTitle(title);
             article.setDescription(cleanHtml(item.path("description").asText("")));
-            article.setLink(item.path("link").asText(""));
+            article.setLink(link);
             article.setPubDate(pubDateStr);
             result.add(article);
+            keptTitles.add(normalized);
+            if (!link.isBlank()) keptLinks.add(link);
         }
+        log.debug("중복 기사 {}건 제외 ({}): 최종 {}건", duplicates, stockName, result.size());
         return result;
+    }
+
+    /** 제목 유사도가 이 값 이상이면 같은 기사로 본다. 문자 2-gram 자카드 기준. */
+    static final double DUPLICATE_SIMILARITY_THRESHOLD = 0.7;
+    /** 비교 대상(종목명 제거 후) 글자 수가 이보다 짧으면 2-gram 이 너무 적어 완전 일치만 중복으로 본다. */
+    private static final int MIN_FUZZY_LENGTH = 5;
+
+    private static final Pattern LEADING_TAG = Pattern.compile("^\\s*[\\[(【<][^\\]\\)】>]*[\\]\\)】>]\\s*");
+    private static final Pattern TRAILING_TAG = Pattern.compile("\\s*[\\[(【<][^\\]\\)】>]*[\\]\\)】>]\\s*$");
+    private static final Pattern NON_WORD = Pattern.compile("[^\\p{L}\\p{N}]");
+    private static final Pattern NUMBER = Pattern.compile("\\d+");
+
+    /**
+     * 중복 비교용 제목 정규화. 앞뒤의 [속보]·[단독]·(종합) 같은 머리말·꼬리말을 떼고, 소문자로 바꾸고,
+     * 공백·문장부호·따옴표를 지운 뒤 종목명을 제거한다(모든 기사 제목에 들어 있어 유사도를 부풀리므로).
+     */
+    static String normalizeTitle(String title, String stockName) {
+        String t = title == null ? "" : title;
+        String prev;
+        do {
+            prev = t;
+            t = LEADING_TAG.matcher(t).replaceFirst("");
+            t = TRAILING_TAG.matcher(t).replaceFirst("");
+        } while (!t.equals(prev));
+        t = NON_WORD.matcher(t.toLowerCase(Locale.ROOT)).replaceAll("");
+        String name = stockName == null ? ""
+                : NON_WORD.matcher(stockName.toLowerCase(Locale.ROOT)).replaceAll("");
+        if (!name.isEmpty()) t = t.replace(name, "");
+        return t;
+    }
+
+    /** 정규화된 두 제목의 문자 2-gram 자카드 유사도(0~1). 순수 함수. */
+    static double bigramJaccard(String a, String b) {
+        Set<String> sa = bigrams(a);
+        Set<String> sb = bigrams(b);
+        if (sa.isEmpty() || sb.isEmpty()) return 0.0;
+        Set<String> inter = new HashSet<>(sa);
+        inter.retainAll(sb);
+        int union = sa.size() + sb.size() - inter.size();
+        return (double) inter.size() / union;
+    }
+
+    private static Set<String> bigrams(String s) {
+        Set<String> set = new HashSet<>();
+        for (int i = 0; i + 2 <= s.length(); i++) set.add(s.substring(i, i + 2));
+        return set;
+    }
+
+    /**
+     * 정규화된 두 제목이 같은 기사인지. 완전 일치이거나, (충분히 길고, 숫자 구성이 같고, 유사도가 임계값 이상)이면 true.
+     * 숫자가 다르면(예: 1분기 vs 2분기) 문자 대부분이 같아도 다른 사실이므로 묶지 않는다.
+     */
+    static boolean isSimilarTitle(String a, String b) {
+        if (a.equals(b)) return true;
+        if (a.length() < MIN_FUZZY_LENGTH || b.length() < MIN_FUZZY_LENGTH) return false;
+        if (!numbersOf(a).equals(numbersOf(b))) return false;
+        return bigramJaccard(a, b) >= DUPLICATE_SIMILARITY_THRESHOLD;
+    }
+
+    private static List<String> numbersOf(String s) {
+        List<String> nums = new ArrayList<>();
+        Matcher m = NUMBER.matcher(s);
+        while (m.find()) nums.add(m.group());
+        return nums;
+    }
+
+    private static boolean isDuplicateOfAny(String normalized, List<String> kept) {
+        for (String k : kept) {
+            if (isSimilarTitle(normalized, k)) return true;
+        }
+        return false;
     }
 
     private boolean isWithin48Hours(String pubDateStr, ZonedDateTime cutoff) {

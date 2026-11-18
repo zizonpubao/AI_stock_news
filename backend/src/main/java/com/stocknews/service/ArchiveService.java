@@ -79,9 +79,14 @@ public class ArchiveService {
             a.setPbr(s.getPbr());
             a.setAiAnalysis(s.getAiAnalysis());
             a.setAnalysisStatus(s.getAnalysisStatus());
+            a.setAnalysisModel(s.getAnalysisModel());
+            a.setAnalyzedAt(s.getAnalyzedAt());
+            a.setAnalysisSentiment(s.getAnalysisSentiment());
+            a.setAnalysisFailReason(s.getAnalysisFailReason());
             a.setNewsStatus(s.getNewsStatus());
 
-            for (NewsArticle n : newsRepository.findByStockOrderByCollectedAtDesc(s)) {
+            // 저장 순서(id 오름차순)로 복사한다: 아카이브 뉴스의 id 순서 = 분석의 인용 번호
+            for (NewsArticle n : newsRepository.findByStockOrderByIdAsc(s)) {
                 DailyArchiveNews an = new DailyArchiveNews();
                 an.setArchiveStock(a);
                 an.setTitle(n.getTitle());

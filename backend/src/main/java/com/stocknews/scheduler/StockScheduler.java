@@ -154,7 +154,8 @@ public class StockScheduler {
             }
 
             // 3단계: Gemini AI 분석 → 10개 종목 한 번에 요청 (API 1회 호출)
-            geminiAnalysisService.analyzeAllStocks(stocks, newsMap);
+            GeminiAnalysisService.AnalysisSummary summary = geminiAnalysisService.analyzeAllStocks(stocks, newsMap);
+            if (summary != null) log.info("AI 분석 요약: {}", summary);
 
             log.info("전체 업데이트 완료 - {}개 종목", stocks.size());
 

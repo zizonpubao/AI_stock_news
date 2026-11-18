@@ -48,7 +48,7 @@ public class StockController {
         return stockRepository.findById(id)
                 .map(stock -> {
                     List<NewsDto> news = newsRepository
-                            .findByStockOrderByCollectedAtDesc(stock)
+                            .findByStockOrderByIdAsc(stock)
                             .stream().map(NewsDto::from).collect(Collectors.toList());
                     return ResponseEntity.ok(Map.of(
                             "stock", StockDto.from(stock),

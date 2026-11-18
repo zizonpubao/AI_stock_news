@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 
+import java.time.LocalDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** 내장 H2 로 실제 SQL 을 실행해 검증한다. */
@@ -52,13 +54,38 @@ class StockRepositoryTest {
     void updateAnalysisKeepsNews() {
         Stock stock = savedStockWithNews();
 
-        int updated = stockRepository.updateAnalysis(stock.getId(), "📈 주요 이슈\n- A", AnalysisStatus.SUCCESS);
+        LocalDateTime at = LocalDateTime.of(2026, 11, 18, 10, 0);
+
+        int updated = stockRepository.updateAnalysis(stock.getId(), "📈 주요 이슈\n- A", AnalysisStatus.SUCCESS,
+                "gemini-2.5-flash", at, "POSITIVE", null);
 
         Stock found = stockRepository.findById(stock.getId()).orElseThrow();
         assertThat(updated).isEqualTo(1);
         assertThat(found.getAiAnalysis()).isEqualTo("📈 주요 이슈\n- A");
         assertThat(found.getAnalysisStatus()).isEqualTo(AnalysisStatus.SUCCESS);
+        assertThat(found.getAnalysisModel()).isEqualTo("gemini-2.5-flash");
+        assertThat(found.getAnalyzedAt()).isEqualTo(at);
+        assertThat(found.getAnalysisSentiment()).isEqualTo("POSITIVE");
+        assertThat(found.getAnalysisFailReason()).isNull();
         assertThat(newsRepository.findByStockOrderByCollectedAtDesc(found)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("뉴스는 저장 순서(id 오름차순)로 조회된다")
+    void newsAreReturnedInInsertionOrder() {
+        Stock stock = savedStockWithNews(); // 뉴스 1건 저장됨
+        Stock found = stockRepository.findById(stock.getId()).orElseThrow();
+        for (String title : new String[]{"둘째", "셋째"}) {
+            NewsArticle n = new NewsArticle();
+            n.setStock(found);
+            n.setTitle(title);
+            newsRepository.saveAndFlush(n);
+        }
+        em.clear();
+
+        var list = newsRepository.findByStockOrderByIdAsc(stockRepository.findById(stock.getId()).orElseThrow());
+
+        assertThat(list).extracting(NewsArticle::getTitle).containsExactly("가나전자 관련 기사", "둘째", "셋째");
     }
 
     @Test
@@ -90,10 +117,11 @@ class StockRepositoryTest {
     void failedAnalysisStoresNoText() {
         Stock stock = savedStockWithNews();
 
-        stockRepository.updateAnalysis(stock.getId(), null, AnalysisStatus.FAILED);
+        stockRepository.updateAnalysis(stock.getId(), null, AnalysisStatus.FAILED, null, null, null, "NO_NEWS");
 
         Stock found = stockRepository.findById(stock.getId()).orElseThrow();
         assertThat(found.getAiAnalysis()).isNull();
+        assertThat(found.getAnalysisFailReason()).isEqualTo("NO_NEWS");
         assertThat(found.getAnalysisStatus()).isEqualTo(AnalysisStatus.FAILED);
         assertThat(newsRepository.findByStockOrderByCollectedAtDesc(found)).hasSize(1);
     }
