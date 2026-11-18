@@ -24,6 +24,10 @@ public class StockDto {
     private String aiAnalysis;
     private String analysisStatus; // PENDING / SUCCESS / FAILED (기존 데이터는 null)
     private String newsStatus;     // PENDING / SUCCESS / FAILED (기존 데이터는 null)
+    private String analysisModel;      // 실제로 응답한 모델 (옛 데이터는 null)
+    private LocalDateTime analyzedAt;  // 분석 저장 시각 (옛 데이터는 null)
+    private String analysisSentiment;  // POSITIVE / NEUTRAL / NEGATIVE (판단 불가·옛 데이터는 null)
+    private String analysisFailReason; // NO_NEWS / AI_CALL_FAILED / INVALID_RESPONSE (성공이면 null)
     private LocalDateTime updatedAt;
 
     public static StockDto from(Stock stock) {
@@ -45,6 +49,10 @@ public class StockDto {
         dto.aiAnalysis = stock.getAiAnalysis();
         dto.analysisStatus = stock.getAnalysisStatus() != null ? stock.getAnalysisStatus().name() : null;
         dto.newsStatus = stock.getNewsStatus() != null ? stock.getNewsStatus().name() : null;
+        dto.analysisModel = stock.getAnalysisModel();
+        dto.analyzedAt = stock.getAnalyzedAt();
+        dto.analysisSentiment = stock.getAnalysisSentiment();
+        dto.analysisFailReason = stock.getAnalysisFailReason();
         dto.updatedAt = stock.getUpdatedAt();
         return dto;
     }
@@ -68,6 +76,10 @@ public class StockDto {
         dto.aiAnalysis = a.getAiAnalysis();
         dto.analysisStatus = a.getAnalysisStatus() != null ? a.getAnalysisStatus().name() : null;
         dto.newsStatus = a.getNewsStatus() != null ? a.getNewsStatus().name() : null;
+        dto.analysisModel = a.getAnalysisModel();
+        dto.analyzedAt = a.getAnalyzedAt();
+        dto.analysisSentiment = a.getAnalysisSentiment();
+        dto.analysisFailReason = a.getAnalysisFailReason();
         dto.updatedAt = a.getSnapshotDate() != null ? a.getSnapshotDate().atTime(16, 0) : null;
         return dto;
     }

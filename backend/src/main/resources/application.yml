@@ -15,6 +15,28 @@ server:
 admin:
   token: ${ADMIN_TOKEN:}
 
+# AI 분석 체인: "제공자:모델" 쉼표 목록, 앞에서부터 시도하고 실패하면 다음으로 넘어간다. 키 없는 제공자는 건너뛴다.
+# 환경변수 ANALYSIS_MODELS 가 비어 있으면(docker compose 가 빈 값으로 넘겨도) 코드의 기본 체인
+# (GeminiAnalysisService.DEFAULT_CHAIN = claude:claude-haiku-5-5,gemini:gemini-3.5-flash-lite)을 쓴다.
+analysis:
+  models: ${ANALYSIS_MODELS:}
+
+anthropic:
+  api:
+    key: ${ANTHROPIC_API_KEY:}
+
+# 기사 본문 수집 (언론사 원문 주소). robots.txt 를 지킨다. 끄려면 NEWS_BODY_ENABLED=false
+news:
+  body:
+    enabled: ${NEWS_BODY_ENABLED:true}
+    max-chars: 1500
+    timeout-ms: 5000
+    max-bytes: 1048576
+    user-agent: "Mozilla/5.0 (compatible; NewsBodyFetcher/1.0)"
+    # robots.txt 의 `*` 규칙을 따르고, 검색·인용형 AI 수집기를 이름으로 금지한 호스트는 추가로 건너뛴다.
+    # 학습용 수집기(GPTBot 등)만 금지한 곳은 수집한다(이 서비스는 기사를 학습에 쓰지 않는다)
+    ai-agents: OAI-SearchBot,ChatGPT-User,Claude-SearchBot,Claude-User,PerplexityBot,Perplexity-User
+
 scheduler:
   stock-update:
     cron: "0 0 8-20 * * MON-FRI"   # 평일 8~20시 매시 정각 (넥스트레이드 프리장 08시 ~ 애프터마켓 20시)

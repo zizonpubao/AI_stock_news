@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Header from './components/Header';
 import StockCard from './components/StockCard';
 import NewsPanel from './components/NewsPanel';
+import RunStatusLine from './components/RunStatusLine';
 import {
   fetchTop10, fetchStockNews,
   fetchArchiveDates, fetchArchiveStocks, fetchArchiveStockNews, fetchHealth,
@@ -139,6 +140,9 @@ export default function App() {
             <span className="text-[11px] font-mono text-slate-600">아직 저장된 아카이브가 없어요 (매 거래일 16시 자동 저장)</span>
           )}
         </div>
+
+        {/* 최근 24시간 운영 현황 (실시간 보기에서만) */}
+        {isToday && <RunStatusLine hours={24} />}
 
         <div className="flex gap-5">
           {/* 좌측: 종목 리스트 */}

@@ -13,6 +13,8 @@ public class NewsDto {
     private String link;
     private String pubDate;
     private LocalDateTime collectedAt;
+    private String bodyStatus;
+    private Integer bodyChars;
 
     public static NewsDto from(NewsArticle article) {
         NewsDto dto = new NewsDto();
@@ -22,6 +24,8 @@ public class NewsDto {
         dto.link = article.getLink();
         dto.pubDate = article.getPubDate();
         dto.collectedAt = article.getCollectedAt();
+        dto.bodyStatus = article.getBodyStatus();
+        dto.bodyChars = article.getBodyChars();
         return dto;
     }
 

@@ -25,6 +25,9 @@ services:
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # 비우면 Claude 를 건너뛰고 Gemini 로 분석
+      ANALYSIS_MODELS: ${ANALYSIS_MODELS:-}       # 비우면 기본 체인(claude:claude-haiku-5-5,gemini:gemini-3.5-flash-lite)
+      NEWS_BODY_ENABLED: ${NEWS_BODY_ENABLED:-true}   # 기사 본문 수집. 끄려면 false (요약문만 사용)
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}              # 관리용 API 토큰. 비우면 수동 갱신/아카이브 API 차단
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,https://*.vercel.app}
     ports:

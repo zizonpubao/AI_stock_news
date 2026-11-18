@@ -71,7 +71,7 @@ class ArchiveServiceTest {
         Stock stock = stockUpdatedAt(today);
         when(stockRepository.findAllByOrderByRankingAsc()).thenReturn(List.of(stock));
         when(archiveStockRepository.findBySnapshotDateOrderByRankingAsc(any())).thenReturn(List.of());
-        when(newsRepository.findByStockOrderByCollectedAtDesc(stock)).thenReturn(List.of());
+        when(newsRepository.findByStockOrderByIdAsc(stock)).thenReturn(List.of());
 
         int saved = service.archiveToday();
 

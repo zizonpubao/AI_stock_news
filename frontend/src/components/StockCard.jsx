@@ -97,8 +97,17 @@ export default function StockCard({ stock, rank, selected, onClick }) {
         )}
         {!stock.aiAnalysis && stock.analysisStatus === 'FAILED' && (
           <div className="mt-2 flex items-center gap-1">
-            <span className="w-1 h-1 rounded-full bg-[var(--yellow)]" />
-            <span className="text-[10px] text-[var(--yellow)] font-mono opacity-80">AI 분석 실패</span>
+            {stock.analysisFailReason === 'NO_NEWS' ? (
+              <>
+                <span className="w-1 h-1 rounded-full bg-slate-500" />
+                <span className="text-[10px] text-slate-400 font-mono">근거 뉴스 없음</span>
+              </>
+            ) : (
+              <>
+                <span className="w-1 h-1 rounded-full bg-[var(--yellow)]" />
+                <span className="text-[10px] text-[var(--yellow)] font-mono opacity-80">AI 분석 실패</span>
+              </>
+            )}
           </div>
         )}
       </div>

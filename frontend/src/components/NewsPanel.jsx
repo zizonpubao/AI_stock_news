@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchStockNews } from '../api/stockApi';
 
 // HTML 엔티티 디코딩 (&quot; &amp; 등)
@@ -28,18 +28,21 @@ function SkeletonNews() {
   );
 }
 
-function NewsItem({ article, index }) {
+function NewsItem({ article, index, highlighted }) {
   return (
     <a
+      id={`news-ref-${index + 1}`}
       href={article.link}
       target="_blank"
       rel="noopener noreferrer"
-      className="block rounded-xl p-4 border border-[var(--border)] hover:border-slate-500 transition-all duration-200 group slide-in"
+      className={`block rounded-xl p-4 border hover:border-slate-500 transition-all duration-200 group slide-in ${
+        highlighted ? 'border-[rgba(0,212,255,0.8)] bg-[rgba(0,212,255,0.08)]' : 'border-[var(--border)]'
+      }`}
       style={{ animationDelay: `${index * 80}ms`, opacity: 0 }}
     >
       <div className="flex items-start gap-3">
         <span className="font-display text-xl text-slate-600 leading-none mt-0.5 group-hover:text-[var(--accent)] transition-colors">
-          {String(index + 1).padStart(2, '0')}
+          [{index + 1}]
         </span>
         <div className="flex-1 min-w-0">
           <p className="font-body font-medium text-sm text-slate-200 group-hover:text-white leading-snug transition-colors line-clamp-2">
@@ -62,25 +65,94 @@ function NewsItem({ article, index }) {
   );
 }
 
-function AiAnalysis({ text }) {
+// 분석 시각 표시: 오늘이면 HH:mm, 아니면 MM-DD HH:mm. 해석할 수 없으면 null
+function formatAnalyzedAt(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = n => String(n).padStart(2, '0');
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const now = new Date();
+  const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  return isToday ? time : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+}
+
+// 뉴스 논조 배지: 주가 등락(빨강/파랑)과 헷갈리지 않도록 색 없이 테두리와 글자로만 구분
+const SENTIMENT_LABEL = {
+  POSITIVE: { mark: '＋', text: '긍정' },
+  NEUTRAL: { mark: '＝', text: '중립' },
+  NEGATIVE: { mark: '－', text: '부정' },
+};
+
+// 문장 안의 [n] 을 번호 칩으로 변환. 해당 기사가 없는 번호는 일반 텍스트로 둔다
+function renderWithRefs(line, newsCount, onRefClick) {
+  return line.split(/(\[\d+\])/).map((part, i) => {
+    const m = /^\[(\d+)\]$/.exec(part);
+    if (m) {
+      const n = Number(m[1]);
+      if (n >= 1 && n <= newsCount) {
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onRefClick(n)}
+            title={`관련 뉴스 ${n}번으로 이동`}
+            className="inline-flex items-center justify-center mx-0.5 px-1 min-w-[1.25rem] h-4 rounded border border-slate-500 text-[10px] font-mono text-slate-300 hover:border-[var(--accent)] hover:text-[var(--accent)] align-baseline transition-colors"
+          >
+            {n}
+          </button>
+        );
+      }
+    }
+    return part;
+  });
+}
+
+function hasValidRef(text, newsCount) {
+  const re = /\[(\d+)\]/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= newsCount) return true;
+  }
+  return false;
+}
+
+function AiAnalysis({ text, model, analyzedAt, sentiment, newsCount, onRefClick }) {
   if (!text) return null;
 
   // 섹션별 파싱 (📈 💡 ⚠️ 기준)
   const lines = text.split('\n').filter(l => l.trim());
+  const meta = [model, formatAnalyzedAt(analyzedAt)].filter(Boolean).join(' · ');
+  const sentimentInfo = SENTIMENT_LABEL[sentiment];
+  const showRefNote = hasValidRef(text, newsCount);
 
   return (
     <div className="rounded-xl border border-[var(--accent)] overflow-hidden"
       style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.05) 0%, rgba(17,24,39,0.8) 100%)' }}>
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-[rgba(0,212,255,0.2)]">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-[rgba(0,212,255,0.2)] flex-wrap">
         <div className="w-5 h-5 rounded flex items-center justify-center bg-[var(--accent)]">
           <svg width="10" height="10" viewBox="0 0 20 20" fill="var(--bg)">
             <path d="M10 2a8 8 0 100 16A8 8 0 0010 2zm1 11H9v-4h2v4zm0-6H9V5h2v2z"/>
           </svg>
         </div>
         <span className="text-xs font-mono text-[var(--accent)] tracking-wider">AI 분석 리포트</span>
-        <span className="ml-auto text-[10px] font-mono text-slate-500">Gemini 2.5 Flash</span>
+        {sentimentInfo && (
+          <span
+            className="text-[10px] font-mono text-slate-300 border border-slate-500 rounded px-1.5 py-0.5"
+            title="수집된 뉴스 전반의 분위기를 AI 가 요약한 것이며, 매수·매도 신호가 아닙니다"
+          >
+            뉴스 논조 {sentimentInfo.mark} {sentimentInfo.text}
+          </span>
+        )}
+        {meta && <span className="ml-auto text-[10px] font-mono text-slate-500">{meta}</span>}
       </div>
       <div className="px-4 py-3 space-y-1">
+        {showRefNote && (
+          <p className="text-[10px] text-slate-500 leading-relaxed mb-2">
+            주요 이슈의 번호는 아래 관련 뉴스 번호입니다. 관점·리스크는 AI 의 해석입니다.
+          </p>
+        )}
         {lines.map((line, i) => {
           const isHeader = line.startsWith('📈') || line.startsWith('💡') || line.startsWith('⚠️');
           const isDisclaimer = line.startsWith('*');
@@ -99,7 +171,7 @@ function AiAnalysis({ text }) {
                   : 'text-xs text-slate-400 leading-relaxed'
               }
             >
-              {line}
+              {isHeader || isDisclaimer ? line : renderWithRefs(line, newsCount, onRefClick)}
             </p>
           );
         })}
@@ -112,12 +184,25 @@ export default function NewsPanel({ stock, fetchNews = fetchStockNews }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [highlight, setHighlight] = useState(null);
+  const highlightTimer = useRef(null);
+
+  const handleRefClick = useCallback((n) => {
+    const el = document.getElementById(`news-ref-${n}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlight(n);
+    clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlight(null), 1800);
+  }, []);
+
+  useEffect(() => () => clearTimeout(highlightTimer.current), []);
 
   useEffect(() => {
     if (!stock) return;
     setLoading(true);
     setError(null);
     setData(null);
+    setHighlight(null);
 
     fetchNews(stock.id)
       .then(setData)
@@ -199,20 +284,49 @@ export default function NewsPanel({ stock, fetchNews = fetchStockNews }) {
       {/* AI 분석 */}
       {data?.stock?.aiAnalysis && (
         <div className="mb-5 fade-up" style={{ animationDelay: '100ms' }}>
-          <AiAnalysis text={data.stock.aiAnalysis} />
+          <AiAnalysis
+            text={data.stock.aiAnalysis}
+            model={data.stock.analysisModel}
+            analyzedAt={data.stock.analyzedAt}
+            sentiment={data.stock.analysisSentiment}
+            newsCount={data.news?.length ?? 0}
+            onRefClick={handleRefClick}
+          />
         </div>
       )}
 
-      {/* AI 분석 실패: 대체 문구를 보여주지 않고 실패 사실을 그대로 알린다 */}
+      {/* 분석 없음: 사유에 따라 구분해 그대로 알린다 */}
       {!data?.stock?.aiAnalysis && data?.stock?.analysisStatus === 'FAILED' && (
-        <div className="mb-5 fade-up rounded-xl border border-[rgba(255,215,0,0.4)] bg-[rgba(255,215,0,0.05)] px-4 py-3"
-          style={{ animationDelay: '100ms' }}>
-          <p className="text-xs font-mono text-[var(--yellow)]">⚠️ AI 분석을 생성하지 못했습니다</p>
-          <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-            외부 AI 서비스 응답에 실패해 이번 갱신에서는 분석이 없습니다. 다음 정기 갱신 때 다시 시도합니다.
-            {data?.stock?.newsStatus !== 'FAILED' && ' 아래 뉴스는 정상 수집된 내용입니다.'}
-          </p>
-        </div>
+        data.stock.analysisFailReason === 'NO_NEWS' ? (
+          <div className="mb-5 fade-up rounded-xl border border-[var(--border)] bg-[rgba(148,163,184,0.06)] px-4 py-3"
+            style={{ animationDelay: '100ms' }}>
+            <p className="text-xs font-mono text-slate-300">근거 뉴스 없음</p>
+            <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+              근거가 될 최근 뉴스가 없어 AI 분석을 생성하지 않았습니다. 근거 없이 추측한 분석은 제공하지 않습니다.
+            </p>
+          </div>
+        ) : (
+          <div className="mb-5 fade-up rounded-xl border border-[rgba(255,215,0,0.4)] bg-[rgba(255,215,0,0.05)] px-4 py-3"
+            style={{ animationDelay: '100ms' }}>
+            {data.stock.analysisFailReason === 'INVALID_RESPONSE' ? (
+              <>
+                <p className="text-xs font-mono text-[var(--yellow)]">⚠️ 근거가 확인되는 분석을 얻지 못했습니다</p>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  AI 응답에서 근거가 확인되는 분석을 얻지 못했습니다. 다음 정기 갱신 때 다시 시도합니다.
+                  {data?.stock?.newsStatus !== 'FAILED' && ' 아래 뉴스는 정상 수집된 내용입니다.'}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-xs font-mono text-[var(--yellow)]">⚠️ AI 분석을 생성하지 못했습니다</p>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  외부 AI 서비스 응답에 실패해 이번 갱신에서는 분석이 없습니다. 다음 정기 갱신 때 다시 시도합니다.
+                  {data?.stock?.newsStatus !== 'FAILED' && ' 아래 뉴스는 정상 수집된 내용입니다.'}
+                </p>
+              </>
+            )}
+          </div>
+        )
       )}
 
       {/* 뉴스 목록 */}
@@ -239,7 +353,7 @@ export default function NewsPanel({ stock, fetchNews = fetchStockNews }) {
           <p className="text-sm text-slate-500 text-center py-8">48시간 이내 뉴스가 없습니다.</p>
         )}
         {data?.news?.map((article, i) => (
-          <NewsItem key={article.id} article={article} index={i} />
+          <NewsItem key={article.id} article={article} index={i} highlighted={highlight === i + 1} />
         ))}
       </div>
     </div>
