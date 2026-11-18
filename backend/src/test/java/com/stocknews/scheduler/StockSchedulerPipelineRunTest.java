@@ -76,11 +76,13 @@ class StockSchedulerPipelineRunTest {
         when(crawler.crawlAndSaveTop10()).thenReturn(List.of(stock1, stock2));
         stubNewsOk();
         when(gemini.analyzeAllStocks(any(), any()))
-                .thenReturn(new AnalysisSummary("gemini-2.5-flash", 2, 2, 0, 0, 1000, 500, 21500L));
+                .thenReturn(new AnalysisSummary("claude-haiku-5-5", 2, 2, 0, 0, 1000, 500, 21500L, 14, 3));
 
         scheduler.updateAllStocks();
 
         PipelineRun run = savedRun();
+        assertThat(run.getNumbersTotal()).isEqualTo(14);
+        assertThat(run.getNumbersUnverified()).isEqualTo(3);
         assertThat(run.getOutcome()).isEqualTo("OK");
         assertThat(run.getTrigger()).isEqualTo("SCHEDULED");
         assertThat(run.getCollectOk()).isTrue();
@@ -88,7 +90,7 @@ class StockSchedulerPipelineRunTest {
         assertThat(run.getNewsSuccess()).isEqualTo(2);
         assertThat(run.getNewsFailed()).isZero();
         assertThat(run.getNewsArticles()).isEqualTo(3);
-        assertThat(run.getAnalysisModel()).isEqualTo("gemini-2.5-flash");
+        assertThat(run.getAnalysisModel()).isEqualTo("claude-haiku-5-5");
         assertThat(run.getAnalysisRequested()).isEqualTo(2);
         assertThat(run.getAnalysisSuccess()).isEqualTo(2);
         assertThat(run.getAnalysisFailed()).isZero();

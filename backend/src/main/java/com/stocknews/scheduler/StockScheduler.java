@@ -214,6 +214,8 @@ public class StockScheduler {
         run.setPromptTokens(summary.promptTokens());
         run.setOutputTokens(summary.outputTokens());
         run.setAnalysisElapsedMs(summary.elapsedMs());
+        run.setNumbersTotal(summary.numbersTotal());
+        run.setNumbersUnverified(summary.numbersUnverified());
         if (summary.requested() > 0 && summary.success() == 0) return PipelineRun.OUTCOME_AI_CALL_FAILED;
         if (summary.failed() > 0) return PipelineRun.OUTCOME_PARTIAL;
         return PipelineRun.OUTCOME_OK;

@@ -43,7 +43,9 @@ class GeminiAnalysisServiceTest {
                 return fake.apply(model);
             }
         };
-        ReflectionTestUtils.setField(s, "geminiModels", models);
+        // 운영 체인은 analysis.models ("제공자:모델"). 이 도우미는 Gemini 모델만으로 체인을 만든다.
+        ReflectionTestUtils.setField(s, "analysisModels",
+                String.join(",", java.util.Arrays.stream(models).map(m -> "gemini:" + m).toList()));
         ReflectionTestUtils.setField(s, "geminiApiKey", "unused");
         return s;
     }

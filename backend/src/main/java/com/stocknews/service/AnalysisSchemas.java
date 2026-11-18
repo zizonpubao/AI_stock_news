@@ -6,9 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 /** 응답 스키마 변환 (순수 함수). */
-final class ExperimentSchemas {
+final class AnalysisSchemas {
 
-    private ExperimentSchemas() {}
+    private AnalysisSchemas() {}
 
     /**
      * 운영 스키마(GeminiAnalysisService.responseSchema)를 복사하면서 모든 object 에 additionalProperties=false 를 더한다.

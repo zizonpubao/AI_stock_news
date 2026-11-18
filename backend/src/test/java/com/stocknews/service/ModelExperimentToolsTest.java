@@ -134,7 +134,7 @@ class ModelExperimentToolsTest {
     @Test
     void 스키마_변환은_모든_object_에_additionalProperties_false_를_더하고_원본은_그대로() {
         Map<String, Object> original = GeminiAnalysisService.responseSchema();
-        Map<String, Object> converted = ExperimentSchemas.withNoAdditionalProperties(original);
+        Map<String, Object> converted = AnalysisSchemas.withNoAdditionalProperties(original);
 
         assertFalse(original.containsKey("additionalProperties"));
         assertEquals(Boolean.FALSE, converted.get("additionalProperties"));

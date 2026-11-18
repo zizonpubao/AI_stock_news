@@ -152,9 +152,9 @@ public final class ModelExperimentRunner {
         clients.put("openai", new OpenAiProviderClient(CompatProviders.NATIVE));
         for (CompatProviders.Def def : CompatProviders.COMPATIBLE) clients.put(def.name(), new OpenAiProviderClient(def));
 
-        // 운영과 같은 프롬프트·같은 스키마
-        String basePrompt = gemini.service().buildPrompt(input.stocks(), input.news());
-        // 변형별 프롬프트: 운영 프롬프트 + 추가 지침 (스키마 요약은 호출 수준에 따라 그 뒤에 붙는다)
+        // 운영과 같은 프롬프트·같은 스키마. 기준은 지침 없는 프롬프트이고 NUMBERS 변형이 운영 지침을 붙인다(= 운영 프롬프트).
+        String basePrompt = gemini.service().buildPrompt(input.stocks(), input.news(), false);
+        // 변형별 프롬프트: 지침 없는 프롬프트 + 변형의 추가 지침 (스키마 요약은 호출 수준에 따라 그 뒤에 붙는다)
         Map<PromptVariant, String> prompts = new LinkedHashMap<>();
         Map<PromptVariant, Integer> promptChars = new LinkedHashMap<>();
         for (PromptVariant v : variants) {

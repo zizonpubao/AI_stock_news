@@ -7,16 +7,18 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 프롬프트 변형 (실험 전용). 운영 프롬프트(buildPrompt)는 건드리지 않고, 실험 코드에서 뒤에 문구를 덧붙인다.
- * 덧붙이는 순서: [운영 프롬프트] + [변형 추가 지침] + [스키마 요약(JSON_MODE·PROMPT_ONLY 수준에만)].
+ * 프롬프트 변형 (실험 전용). 기준은 지침 없는 프롬프트(buildPrompt(.., false))이고, 변형이 뒤에 문구를 덧붙인다.
+ * 덧붙이는 순서: [지침 없는 프롬프트] + [변형 추가 지침] + [스키마 요약(JSON_MODE·PROMPT_ONLY 수준에만)].
+ * BASE = 지침 없음, NUMBERS = 운영과 같은 지침. 그러므로 NUMBERS 의 결과는 운영 buildPrompt 와 같은 프롬프트에서 나온다.
  */
 enum PromptVariant {
-    /** 운영 프롬프트 그대로 */
+    /** 수치 인용 지침이 없는 프롬프트 */
     BASE(""),
-    /** 숫자 인용 지시를 덧붙인 것. 문구를 바꾸지 않는다(결과 문서에 원문으로 기록한다). */
-    NUMBERS("\n[추가 지침]\n"
-            + "주요 이슈를 쓸 때, 근거로 인용하는 기사에 수치(금액, 비율, 수량, 순위, 날짜 등)가 있으면 그 수치를 문장에 그대로 포함하세요. "
-            + "기사에 없는 수치는 절대 쓰지 마세요. 수치가 없는 기사라면 수치 없이 쓰세요.");
+    /**
+     * 숫자 인용 지침이 붙은 프롬프트. 지침 문구는 운영 상수(GeminiAnalysisService.NUMBERS_GUIDELINE)를 그대로 쓴다
+     * (결과 문서에 원문으로 기록한다). 이제 운영 프롬프트와 같다.
+     */
+    NUMBERS(GeminiAnalysisService.NUMBERS_GUIDELINE);
 
     static final String DEFAULT = "BASE,NUMBERS";
 
@@ -26,12 +28,12 @@ enum PromptVariant {
         this.suffix = suffix;
     }
 
-    /** 운영 프롬프트 뒤에 붙는 문구 (BASE 는 빈 문자열) */
+    /** 지침 없는 프롬프트 뒤에 붙는 문구 (BASE 는 빈 문자열) */
     String suffix() {
         return suffix;
     }
 
-    /** 운영 프롬프트에 이 변형의 추가 지침을 덧붙인 프롬프트 */
+    /** 지침 없는 프롬프트에 이 변형의 추가 지침을 덧붙인 프롬프트 */
     String apply(String prompt) {
         return prompt + suffix;
     }

@@ -58,6 +58,10 @@ public class PipelineRun {
     private Integer promptTokens;
     private Integer outputTokens;
     private Long analysisElapsedMs;
+    /** 저장된 이슈 문장 속 숫자의 총수 (측정만 한다. 분석을 호출하지 않았거나 전부 실패하면 null) */
+    private Integer numbersTotal;
+    /** 그중 인용 기사(제목+요약)에서 같은 표기를 찾지 못한 숫자 수. 표기가 다른 같은 값도 포함되므로 환각 수가 아니다. */
+    private Integer numbersUnverified;
 
     /** OK / COLLECT_FAILED / AI_CALL_FAILED / PARTIAL / ERROR */
     @Column(length = 30)

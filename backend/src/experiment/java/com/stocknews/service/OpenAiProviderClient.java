@@ -78,7 +78,7 @@ final class OpenAiProviderClient implements ProviderClient {
             switch (level) {
                 case SCHEMA_STRICT, SCHEMA -> {
                     ResponseFormatJsonSchema.JsonSchema.Schema.Builder schemaBuilder = ResponseFormatJsonSchema.JsonSchema.Schema.builder();
-                    for (Map.Entry<String, Object> e : ExperimentSchemas.withNoAdditionalProperties(schema).entrySet()) {
+                    for (Map.Entry<String, Object> e : AnalysisSchemas.withNoAdditionalProperties(schema).entrySet()) {
                         schemaBuilder.putAdditionalProperty(e.getKey(), JsonValue.from(e.getValue()));
                     }
                     ResponseFormatJsonSchema.JsonSchema.Builder js = ResponseFormatJsonSchema.JsonSchema.builder()

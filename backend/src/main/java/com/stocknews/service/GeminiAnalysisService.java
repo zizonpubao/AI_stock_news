@@ -20,10 +20,16 @@ import reactor.util.retry.Retry;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * 뉴스 근거 기반 AI 분석.
  * 뉴스가 있는 종목만 한 번에 요청하고, JSON 구조화 출력으로 받아 검증한 뒤 기존 텍스트 형식으로 저장한다.
+ *
+ * 이름과 달리 이 클래스는 여러 제공자(Claude, Gemini)를 설정 순서대로 호출한다 (analysis.models, 기본
+ * claude:claude-haiku-5-5,gemini:gemini-3.5-flash-lite). 앞 제공자가 실패하면 다음으로 넘어가 서로 다른 회사 두 곳에
+ * 걸쳐 분석이 나오게 한다. 키가 없는 제공자는 건너뛴다. 처음에는 Gemini 만 부르던 클래스라 이 이름이 남았고,
+ * 다른 코드·테스트가 많이 참조해 이번에는 이름을 바꾸지 않았다.
  */
 @Slf4j
 @Service
@@ -33,12 +39,38 @@ public class GeminiAnalysisService {
     private final StockRepository stockRepository;
     private final ObjectMapper objectMapper;
 
-    @Value("${gemini.api.key}")
+    @Value("${gemini.api.key:}")
     private String geminiApiKey;
 
-    // 과부하(503) 시 순서대로 폴백할 모델들. 앞이 실패하면 다음 모델로 자동 전환.
-    @Value("${gemini.api.models:gemini-2.5-flash,gemini-3.8-flash,gemini-1.5-flash}")
+    @Value("${anthropic.api.key:}")
+    private String anthropicApiKey;
+
+    /** 운영 분석 체인: "제공자:모델" 쉼표 목록. 비어 있으면(환경변수가 빈 문자열로 와도) DEFAULT_CHAIN. */
+    @Value("${analysis.models:}")
+    private String analysisModels;
+
+    // 관리자용 Gemini 모델 비교(ModelExperimentService)의 기본 모델 목록. 운영 체인에는 쓰지 않는다.
+    // gemini-3.6-flash 는 이 환경에서 호출 가능 여부를 확인하지 못했다 (비교 실험 때 404 면 실패로 표시된다).
+    @Value("${gemini.api.models:gemini-3.5-flash-lite,gemini-3.6-flash}")
     private String[] geminiModels;
+
+    static final String PROVIDER_CLAUDE = "claude";
+    static final String PROVIDER_GEMINI = "gemini";
+    static final String DEFAULT_CHAIN = "claude:claude-haiku-5-5,gemini:gemini-3.5-flash-lite";
+    private static final Pattern CHAIN_MODEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
+
+    /**
+     * 프롬프트 끝에 붙는 수치 인용 지침 (모델 비교 실험의 NUMBERS 변형에서 검증한 문구). 한 글자도 바꾸지 않는다.
+     * 실험 도구(PromptVariant.NUMBERS)도 이 상수를 그대로 쓴다.
+     */
+    static final String NUMBERS_GUIDELINE = "\n[추가 지침]\n"
+            + "주요 이슈를 쓸 때, 근거로 인용하는 기사에 수치(금액, 비율, 수량, 순위, 날짜 등)가 있으면 그 수치를 문장에 그대로 포함하세요. "
+            + "기사에 없는 수치는 절대 쓰지 마세요. 수치가 없는 기사라면 수치 없이 쓰세요.";
+
+    /** 분석 체인의 한 칸 */
+    record ChainEntry(String provider, String model) {}
+
+    private volatile ClaudeAnalysisClient claudeClient;
 
     private static final String MODEL_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
     private static final String API_KEY_HEADER = "x-goog-api-key";
@@ -63,9 +95,19 @@ public class GeminiAnalysisService {
 
     record Issue(String text, List<Integer> sources) {}
 
-    /** analyzeAllStocks 실행 요약. model 은 성공한 모델 (전부 실패했거나 호출하지 않았으면 null). */
+    /**
+     * analyzeAllStocks 실행 요약. model 은 성공한 모델 (전부 실패했거나 호출하지 않았으면 null).
+     * numbersTotal·numbersUnverified 는 저장된 이슈 문장 속 숫자의 총수와 인용 기사에서 확인되지 않은 숫자 수 (측정만 하고 문장은 고치지 않는다).
+     */
     public record AnalysisSummary(String model, int requested, int success, int failed, int skipped,
-                                  Integer promptTokens, Integer outputTokens, long elapsedMs) {}
+                                  Integer promptTokens, Integer outputTokens, long elapsedMs,
+                                  Integer numbersTotal, Integer numbersUnverified) {
+        /** 수치 근거 측정값이 없는 요약 (호출하지 않았거나 전부 실패한 경우) */
+        public AnalysisSummary(String model, int requested, int success, int failed, int skipped,
+                               Integer promptTokens, Integer outputTokens, long elapsedMs) {
+            this(model, requested, success, failed, skipped, promptTokens, outputTokens, elapsedMs, null, null);
+        }
+    }
 
     /**
      * 뉴스가 있는 종목을 한 번의 API 호출로 분석해 저장한다.
@@ -93,7 +135,7 @@ public class GeminiAnalysisService {
                 targetNews.add(articles);
             }
         }
-        log.info("Gemini AI 분석 시작 - 전체 {}개 종목, 요청 {}개, 뉴스 없음으로 건너뜀 {}개",
+        log.info("AI 분석 시작 - 전체 {}개 종목, 요청 {}개, 뉴스 없음으로 건너뜀 {}개",
                 stocks.size(), targets.size(), skipped);
 
         if (targets.isEmpty()) {
@@ -105,16 +147,22 @@ public class GeminiAnalysisService {
         log.debug("프롬프트 길이: {} chars", prompt.length());
         int[] newsCounts = targetNews.stream().mapToInt(List::size).toArray();
 
-        // 2) 모델 폴백: 앞 모델이 실패(호출 오류·JSON 해석 실패)면 다음 모델로 전환
-        for (String rawModel : geminiModels) {
-            String model = rawModel.trim();
+        // 2) 제공자 체인: 앞 제공자가 실패(호출 오류·거절·잘림·JSON 해석 실패)면 다음으로 넘어간다. 키 없는 제공자는 건너뛴다.
+        int attempted = 0;
+        for (ChainEntry entry : resolveChain()) {
+            String model = entry.model();
+            if (!hasKey(entry.provider())) {
+                log.warn("{} API 키가 설정되지 않아 '{}' 건너뜀", entry.provider(), model);
+                continue;
+            }
+            attempted++;
             ModelResponse response;
             Map<Integer, StockAnalysis> analyses;
             try {
-                response = callModel(model, buildRequestBody(model, prompt));
+                response = callProvider(entry.provider(), model, prompt);
                 analyses = parseAndValidate(objectMapper, response.text(), newsCounts);
             } catch (Exception e) {
-                log.warn("Gemini 모델 '{}' 실패 → 다음 모델 시도. 사유: {}", model, e.getMessage());
+                log.warn("{} 모델 '{}' 실패 → 다음 모델 시도. 사유: {}", entry.provider(), model, describe(e));
                 continue;
             }
 
@@ -131,18 +179,112 @@ public class GeminiAnalysisService {
                     success++;
                 }
             }
+            NumericGrounding.Result grounding = measureNumbers(targets, targetNews, analyses);
             AnalysisSummary summary = new AnalysisSummary(model, targets.size(), success, failed, skipped,
-                    response.promptTokens(), response.outputTokens(), elapsed(startedAt));
-            log.info("Gemini 분석 완료 - 모델 {}, 성공 {}, 실패 {}, 건너뜀 {}, 프롬프트 토큰 {}, 출력 토큰 {}, 생각 토큰 {}, 소요 {}ms",
-                    model, success, failed, skipped, response.promptTokens(), response.outputTokens(),
+                    response.promptTokens(), response.outputTokens(), elapsed(startedAt),
+                    grounding.numbersTotal(), grounding.unverifiedNumbers());
+            log.info("AI 분석 완료 - 제공자 {}, 모델 {}, 성공 {}, 실패 {}, 건너뜀 {}, 프롬프트 토큰 {}, 출력 토큰 {}, 생각 토큰 {}, 소요 {}ms",
+                    entry.provider(), model, success, failed, skipped, response.promptTokens(), response.outputTokens(),
                     response.thoughtTokens(), summary.elapsedMs());
+            log.info("수치 근거 측정 - 이슈 문장의 숫자 {}개 중 인용 기사에서 확인되지 않은 숫자 {}개 (측정만 하고 문장은 고치지 않음)",
+                    grounding.numbersTotal(), grounding.unverifiedNumbers());
             return summary;
         }
 
-        log.error("모든 Gemini 모델 실패 → 요청한 {}개 종목을 FAILED(AI_CALL_FAILED) 로 기록 (대체 문구 저장 안 함)",
-                targets.size());
+        if (attempted == 0) {
+            log.error("체인의 모든 제공자에 API 키가 없어 호출하지 못함 → 요청한 {}개 종목을 FAILED(AI_CALL_FAILED) 로 기록", targets.size());
+        } else {
+            log.error("체인의 모든 모델 실패 → 요청한 {}개 종목을 FAILED(AI_CALL_FAILED) 로 기록 (대체 문구 저장 안 함)",
+                    targets.size());
+        }
         for (Stock stock : targets) markFailed(stock, AnalysisFailReason.AI_CALL_FAILED);
         return new AnalysisSummary(null, targets.size(), 0, targets.size(), skipped, null, null, elapsed(startedAt));
+    }
+
+    // ===== 제공자 체인 =====
+
+    /** 설정된 체인. 비었거나(빈 환경변수 포함) 형식이 잘못되면 기본 체인을 쓴다 (잘못된 형식은 ERROR 로그). */
+    List<ChainEntry> resolveChain() {
+        if (analysisModels == null || analysisModels.isBlank()) return parseChain(DEFAULT_CHAIN);
+        try {
+            return parseChain(analysisModels);
+        } catch (IllegalArgumentException e) {
+            log.error("analysis.models 설정이 잘못되어 기본 체인({})을 사용: {}", DEFAULT_CHAIN, e.getMessage());
+            return parseChain(DEFAULT_CHAIN);
+        }
+    }
+
+    /** "제공자:모델,제공자:모델" 해석 (순수 함수). 잘못된 항목이 하나라도 있으면 IllegalArgumentException. */
+    static List<ChainEntry> parseChain(String raw) {
+        List<ChainEntry> chain = new ArrayList<>();
+        for (String item : raw.split(",")) {
+            String t = item.trim();
+            if (t.isEmpty()) continue;
+            int colon = t.indexOf(':');
+            String provider = colon < 0 ? "" : t.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+            String model = colon < 0 ? "" : t.substring(colon + 1).trim();
+            if (!PROVIDER_CLAUDE.equals(provider) && !PROVIDER_GEMINI.equals(provider)) {
+                throw new IllegalArgumentException("'제공자:모델' 형식이어야 하고 제공자는 claude 또는 gemini 입니다 (항목 '" + t + "')");
+            }
+            if (!CHAIN_MODEL.matcher(model).matches()) {
+                throw new IllegalArgumentException("모델 이름이 올바르지 않습니다 (항목 '" + t + "')");
+            }
+            chain.add(new ChainEntry(provider, model));
+        }
+        if (chain.isEmpty()) throw new IllegalArgumentException("체인이 비어 있습니다");
+        return chain;
+    }
+
+    private boolean hasKey(String provider) {
+        String key = PROVIDER_CLAUDE.equals(provider) ? anthropicApiKey : geminiApiKey;
+        return key != null && !key.isBlank();
+    }
+
+    /** 제공자별 호출. 테스트는 callModel(Gemini)·callClaude 를 대체한다. */
+    ModelResponse callProvider(String provider, String model, String prompt) {
+        if (PROVIDER_CLAUDE.equals(provider)) return callClaude(model, prompt);
+        return callModel(model, buildRequestBody(model, prompt));
+    }
+
+    /** Claude 호출 (공식 SDK, ClaudeAnalysisClient). 실패하면 코드만 담은 예외를 던진다. */
+    ModelResponse callClaude(String model, String prompt) {
+        ClaudeAnalysisClient c = claudeClient;
+        if (c == null) {
+            synchronized (this) {
+                if (claudeClient == null) claudeClient = new ClaudeAnalysisClient(anthropicApiKey);
+                c = claudeClient;
+            }
+        }
+        return c.call(model, prompt);
+    }
+
+    /** 로그용 실패 사유. 설정된 키 값이 메시지에 섞여 있으면 가린다. */
+    private String describe(Exception e) {
+        String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        for (String key : new String[]{anthropicApiKey, geminiApiKey}) {
+            if (key != null && !key.isBlank()) msg = msg.replace(key, "***");
+        }
+        return msg;
+    }
+
+    // ===== 수치 근거 측정 =====
+
+    /**
+     * 저장될 분석의 이슈 문장 속 숫자가 인용 기사(제목+요약)에 있는지 센다. 측정만 하고 문장은 걸러내거나 고치지 않는다.
+     * 한계: 표기가 다른 같은 값("2조"와 "20,000억")을 불일치로 잡으므로 자동으로 지우면 정상 문장도 지워진다 (NumericGrounding 설명 참고).
+     */
+    static NumericGrounding.Result measureNumbers(List<Stock> targets, List<List<NewsArticle>> targetNews,
+                                                  Map<Integer, StockAnalysis> analyses) {
+        List<NumericGrounding.StockInput> inputs = new ArrayList<>();
+        for (Map.Entry<Integer, StockAnalysis> e : analyses.entrySet()) {
+            int idx = e.getKey();
+            List<String> texts = new ArrayList<>();
+            for (NewsArticle a : targetNews.get(idx)) {
+                texts.add(NumericGrounding.articleText(a.getTitle(), a.getDescription(), MAX_DESCRIPTION_CHARS));
+            }
+            inputs.add(new NumericGrounding.StockInput(targets.get(idx).getName(), texts, e.getValue().issues()));
+        }
+        return NumericGrounding.evaluate(inputs);
     }
 
     /** 설정된 모델 이름 목록 (공백 제거). 실험 서비스가 기본 모델 목록으로 쓴다. */
@@ -208,6 +350,14 @@ public class GeminiAnalysisService {
 
     /** 뉴스는 분석 대상 데이터일 뿐임을 구분자와 지침으로 분명히 한다. 번호는 모두 1부터. */
     String buildPrompt(List<Stock> stocks, List<List<NewsArticle>> newsLists) {
+        return buildPrompt(stocks, newsLists, true);
+    }
+
+    /**
+     * includeNumbersGuideline=true 가 운영 프롬프트(수치 인용 지침이 끝에 한 번 붙음), false 는 지침 없는 기본 프롬프트
+     * (모델 비교 실험의 BASE 변형).
+     */
+    String buildPrompt(List<Stock> stocks, List<List<NewsArticle>> newsLists, boolean includeNumbersGuideline) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 한국 주식시장 뉴스를 요약·분석하는 도우미입니다.\n");
         sb.append("아래 '뉴스 데이터' 블록에는 종목별로 번호가 매겨진 뉴스(제목, 요약)가 들어 있습니다.\n\n");
@@ -234,6 +384,7 @@ public class GeminiAnalysisService {
             }
         }
         sb.append("\n<<<뉴스 데이터 끝>>>\n");
+        if (includeNumbersGuideline) sb.append(NUMBERS_GUIDELINE);
         return sb.toString();
     }
 

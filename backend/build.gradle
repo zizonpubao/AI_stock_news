@@ -17,8 +17,8 @@ configurations {
     }
 }
 
-// 모델 비교 실험용 소스 세트. 운영 코드(main)를 그대로 가져다 쓰되, Claude·OpenAI SDK 는 여기에만 둔다.
-// bootJar 는 main 의 runtimeClasspath 만 담으므로 이 SDK 들은 운영 JAR 에 들어가지 않는다.
+// 모델 비교 실험용 소스 세트. 운영 코드(main)와 그 의존성(Anthropic SDK 포함)을 그대로 가져다 쓰고, OpenAI SDK 만 여기에 둔다.
+// bootJar 는 main 의 runtimeClasspath 만 담으므로 OpenAI SDK 는 운영 JAR 에 들어가지 않는다.
 sourceSets {
     experiment {
         // 소스는 기본 위치 src/experiment/java, 리소스는 src/experiment/resources
@@ -46,8 +46,10 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     implementation 'io.projectreactor.netty:reactor-netty-http'
 
+    // Claude 호출 (운영 분석의 주 모델). 실험에서 실제 호출로 검증한 버전이다.
+    implementation 'com.anthropic:anthropic-java:3.3.0'
+
     // 모델 비교 실험 전용 (운영 JAR 에 포함되지 않는다)
-    experimentImplementation 'com.anthropic:anthropic-java:3.3.0'
     experimentImplementation 'com.openai:openai-java:4.108.0'
     // 실험의 순수 함수(지표 계산)를 기존 test 소스 세트에서 테스트한다
     testImplementation sourceSets.experiment.output

@@ -238,9 +238,9 @@ final class ExperimentReport {
 
     private static void appendVariantSection(StringBuilder sb, List<PromptVariant> variants, int runs) {
         sb.append("## 프롬프트 변형과 호출 순서\n\n");
-        sb.append("- BASE: 운영 프롬프트(GeminiAnalysisService.buildPrompt)를 그대로 보냈다.\n");
-        sb.append("- NUMBERS: 운영 프롬프트 뒤에 아래 [추가 지침]을 그대로 덧붙였다. 운영 코드는 바꾸지 않고 실험 코드에서 덧붙인다.\n");
-        sb.append("- 덧붙이는 순서: 운영 프롬프트, 추가 지침(NUMBERS 만), 스키마 요약(형식 강제 수준이 JSON_MODE·PROMPT_ONLY 인 호출에만).\n");
+        sb.append("- BASE: 수치 인용 지침이 없는 프롬프트(GeminiAnalysisService.buildPrompt(.., false))를 보냈다.\n");
+        sb.append("- NUMBERS: 그 뒤에 아래 [추가 지침]을 그대로 덧붙였다. 이 지침은 운영 상수(NUMBERS_GUIDELINE)이고, 이 프롬프트는 현재 운영 프롬프트와 같다.\n");
+        sb.append("- 덧붙이는 순서: 지침 없는 프롬프트, 추가 지침(NUMBERS 만), 스키마 요약(형식 강제 수준이 JSON_MODE·PROMPT_ONLY 인 호출에만).\n");
         sb.append("- 호출 순서: 모델마다 반복 i 에서 변형을 번갈아 호출한다. 변형 목록을 (i-1)칸 돌린 순서로 부른다(변형이 BASE,NUMBERS 이면 반복 1 은 BASE 다음 NUMBERS, 반복 2 는 NUMBERS 다음 BASE). ");
         sb.append("한 변형만 몰아서 부르면 시간대에 따른 서버 상태 차이가 변형 차이에 섞이기 때문이다. 이번 실행의 변형: ")
                 .append(variantNames(variants)).append(", 반복 ").append(runs).append("회.\n\n");
