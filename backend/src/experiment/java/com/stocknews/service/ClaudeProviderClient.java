@@ -53,7 +53,7 @@ final class ClaudeProviderClient implements ProviderClient {
     }
 
     @Override
-    public ProviderResult call(String modelId, String prompt, Map<String, Object> schema) {
+    public ProviderResult call(String modelId, String prompt, Map<String, Object> schema, FormatLevel level) {
         try {
             Map<String, JsonValue> props = new LinkedHashMap<>();
             for (Map.Entry<String, Object> e : ExperimentSchemas.withNoAdditionalProperties(schema).entrySet()) {
@@ -96,9 +96,16 @@ final class ClaudeProviderClient implements ProviderClient {
         }
     }
 
+    /** 구조화 출력(output_config.format) 한 수준만 쓴다. 내려가지 않는다 (기준선을 흐리지 않기 위해). */
+    @Override
+    public List<FormatLevel> formatLadder(String modelId) {
+        return List.of(FormatLevel.SCHEMA);
+    }
+
     @Override
     public List<String> requestSettings(String modelId) {
         return List.of(
+                "형식 강제: SCHEMA (output_config.format). strict 플래그는 없고 내려가기 없음",
                 "temperature·top_p·top_k 미전송 (이 모델은 기본값이 아닌 값을 400 으로 거부)",
                 "구조화 출력: output_config.format (JSON 스키마). 운영 스키마에 object 마다 additionalProperties=false 를 더함",
                 "thinking: 파라미터 생략(기본 adaptive). max_tokens " + MAX_TOKENS + ", 비스트리밍",

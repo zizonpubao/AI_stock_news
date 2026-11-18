@@ -26,7 +26,8 @@ final class ExperimentStats {
             int issuesTotal, int issuesWithValidSources, int invalidSourceRefs, int issuesDroppedNoSource,
             Double avgIssueChars,
             int issuesWithNumbers, int issuesAllNumbersConfirmed, int unverifiedNumbers,
-            List<NumericGrounding.Unverified> unverifiedExamples) {}
+            List<NumericGrounding.Unverified> unverifiedExamples,
+            String formatLevel, List<String> formatAttempts, boolean unwrapped) {}
 
     public record Aggregate(
             int runs, int callOk, int jsonParsed,
@@ -35,7 +36,8 @@ final class ExperimentStats {
             Double stockValidRate, Double sourceValidRate, Double numericMatchRate,
             int stocksRequested, int stocksReturned, int stocksValid,
             int issuesTotal, int issuesWithValidSources, int invalidSourceRefs, int issuesDroppedNoSource,
-            int issuesWithNumbers, int issuesAllNumbersConfirmed) {}
+            int issuesWithNumbers, int issuesAllNumbersConfirmed,
+            Map<String, Integer> formatLevels, Map<String, Integer> formatTrails, int unwrappedRuns) {}
 
     public record Price(double inputPerMTok, double outputPerMTok, String source, String checkedAt, String note) {}
 
@@ -67,7 +69,25 @@ final class ExperimentStats {
                 rate(stocksValid, stocksRequested), rate(issuesValid, issuesTotal), rate(allConfirmed, withNumbers),
                 stocksRequested, sum(parsed, RunRecord::stocksReturned), stocksValid,
                 issuesTotal, issuesValid, sum(parsed, RunRecord::invalidSourceRefs), sum(parsed, RunRecord::issuesDroppedNoSource),
-                withNumbers, allConfirmed);
+                withNumbers, allConfirmed,
+                countAppliedLevels(ok), countTrails(runs), (int) ok.stream().filter(RunRecord::unwrapped).count());
+    }
+
+    /** 호출이 성공한 반복에서 실제로 적용된 형식 강제 수준별 횟수 (등장 순서 유지) */
+    static Map<String, Integer> countAppliedLevels(List<RunRecord> ok) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (RunRecord r : ok) if (r.formatLevel() != null) m.merge(r.formatLevel(), 1, Integer::sum);
+        return m;
+    }
+
+    /** 반복마다의 시도 이력("SCHEMA_STRICT:HTTP_400 > JSON_MODE:OK")별 횟수 */
+    static Map<String, Integer> countTrails(List<RunRecord> runs) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (RunRecord r : runs) {
+            if (r.formatAttempts() == null || r.formatAttempts().isEmpty()) continue;
+            m.merge(String.join(" > ", r.formatAttempts()), 1, Integer::sum);
+        }
+        return m;
     }
 
     static Long median(List<Long> values) {

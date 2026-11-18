@@ -39,7 +39,8 @@ import java.util.Map;
  * 운영 공개 API 에서 현재 종목·뉴스를 읽고, 운영과 같은 프롬프트(GeminiAnalysisService.buildPrompt)와 같은 검증
  * (parseAndValidate, ModelExperimentService.buildResult)을 모든 모델에 똑같이 적용한다. 운영 DB·서버에는 쓰지 않는다.
  *
- * 설정(환경변수): EXPERIMENT_API_BASE, EXPERIMENT_MODELS, EXPERIMENT_RUNS. 키: GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY.
+ * 설정(환경변수): EXPERIMENT_API_BASE, EXPERIMENT_MODELS, EXPERIMENT_RUNS. 키: GEMINI_API_KEY(Gemma 포함), ANTHROPIC_API_KEY, OPENAI_API_KEY,
+ * UPSTAGE_API_KEY, CLOVA_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY.
  * 종료 코드: 0 정상, 1 호출한 모든 모델이 한 번도 성공하지 못함, 2 설정·입력 오류.
  */
 public final class ModelExperimentRunner {
@@ -95,11 +96,14 @@ public final class ModelExperimentRunner {
         Map<String, ProviderClient> clients = new LinkedHashMap<>();
         clients.put("gemini", gemini);
         clients.put("claude", new ClaudeProviderClient());
-        clients.put("openai", new OpenAiProviderClient());
+        clients.put("openai", new OpenAiProviderClient(CompatProviders.NATIVE));
+        for (CompatProviders.Def def : CompatProviders.COMPATIBLE) clients.put(def.name(), new OpenAiProviderClient(def));
 
         // 운영과 같은 프롬프트·같은 스키마
         String prompt = gemini.service().buildPrompt(input.stocks(), input.news());
         Map<String, Object> schema = GeminiAnalysisService.responseSchema();
+        // JSON_MODE·PROMPT_ONLY 호출에만 프롬프트 뒤에 덧붙이는 문구 (모든 해당 모델에 같다)
+        String schemaNote = FormatControl.schemaNote(schema);
         int[] newsCounts = input.news().stream().mapToInt(List::size).toArray();
 
         Map<String, Price> prices;
@@ -126,10 +130,10 @@ public final class ModelExperimentRunner {
             }
             List<RunRecord> records = new ArrayList<>();
             for (int i = 1; i <= runs; i++) {
-                RunRecord r = runOnce(client, spec, i, prompt, schema, input, newsCounts, price, mapper);
+                RunRecord r = runOnce(client, spec, i, prompt, schemaNote, schema, input, newsCounts, price, mapper);
                 records.add(r);
                 out.println("[" + spec.key() + "] " + i + "/" + runs + " " + (r.callOk() ? (r.jsonParsed() ? "OK" : r.errorCode()) : r.errorCode())
-                        + " " + r.elapsedMs() + "ms");
+                        + " " + r.elapsedMs() + "ms [" + String.join(", ", r.formatAttempts()) + "]");
             }
             outcomes.add(new ModelOutcome(spec, false, settings, price, records, ExperimentStats.aggregate(records)));
         }
@@ -139,10 +143,10 @@ public final class ModelExperimentRunner {
         try {
             Files.createDirectories(dir);
             Files.writeString(dir.resolve("result.json"),
-                    mapper.writeValueAsString(resultJson(ranAt, base, input, prompt.length(), sha, runs, outcomes)),
+                    mapper.writeValueAsString(resultJson(ranAt, base, input, prompt.length(), sha, runs, outcomes, schemaNote, clients)),
                     StandardCharsets.UTF_8);
             String summary = ExperimentReport.render(ranAt, base, input.stocks().size(), input.articleCount(),
-                    prompt.length(), runs, outcomes);
+                    prompt.length(), runs, outcomes, schemaNote);
             Files.writeString(dir.resolve("summary.md"), summary, StandardCharsets.UTF_8);
             out.println();
             out.println(summary);
@@ -169,33 +173,46 @@ public final class ModelExperimentRunner {
 
     // ===== 한 번 호출 + 지표 =====
 
-    private RunRecord runOnce(ProviderClient client, ModelSpec spec, int run, String prompt, Map<String, Object> schema,
-                              Input input, int[] newsCounts, Price price, ObjectMapper mapper) {
+    private RunRecord runOnce(ProviderClient client, ModelSpec spec, int run, String prompt, String schemaNote,
+                              Map<String, Object> schema, Input input, int[] newsCounts, Price price, ObjectMapper mapper) {
         long t0 = System.nanoTime();
-        ProviderResult r = client.call(spec.modelId(), prompt, schema);
+        // 처음 수준의 요청을 400 계열로 거부하면 한 단계씩 내려가며 다시 부른다. 스키마로 강제하지 않는 수준에만 스키마 요약을 덧붙인다.
+        FormatControl.Outcome fo = FormatControl.execute(client.formatLadder(spec.modelId()),
+                level -> client.call(spec.modelId(), level.appendsSchemaNote() ? prompt + schemaNote : prompt, schema, level));
+        ProviderResult r = fo.result();
         long ms = (System.nanoTime() - t0) / 1_000_000;
         Double cost = ExperimentStats.cost(price, r.inputTokens(), r.outputTokens());
         int n = newsCounts.length;
+        String level = fo.level().name();
 
         if (r.errorCode() != null || r.text() == null) {
             return new RunRecord(run, false, r.errorCode() == null ? "EMPTY_RESPONSE" : r.errorCode(), ms,
                     r.inputTokens(), r.outputTokens(), r.reasoningTokens(), cost,
-                    false, n, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of());
+                    false, n, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of(), level, fo.attempts(), false);
+        }
+
+        // 스키마로 강제하지 않은 수준은 코드펜스·앞뒤 설명 문장이 붙어 올 수 있어 검증 전에 첫 JSON 만 뽑는다
+        String text = r.text();
+        boolean unwrapped = false;
+        if (fo.level().unwrapsResponse()) {
+            FormatControl.Extracted ex = FormatControl.extractJson(text);
+            text = ex.json();
+            unwrapped = ex.unwrapped();
         }
 
         GeminiAnalysisService.ValidationStats stats = new GeminiAnalysisService.ValidationStats();
         Map<Integer, GeminiAnalysisService.StockAnalysis> analyses;
         try {
-            analyses = GeminiAnalysisService.parseAndValidate(mapper, r.text(), newsCounts, stats);
+            analyses = GeminiAnalysisService.parseAndValidate(mapper, text, newsCounts, stats);
         } catch (IOException e) {
             return new RunRecord(run, true, "INVALID_JSON", ms,
                     r.inputTokens(), r.outputTokens(), r.reasoningTokens(), cost,
-                    false, n, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of());
+                    false, n, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of(), level, fo.attempts(), unwrapped);
         }
 
         // 지표 정의는 운영 모델 비교(ModelExperimentService.buildResult)와 같다
         ModelExperimentService.ModelResult base = ModelExperimentService.buildResult(spec.key(), ms,
-                new GeminiAnalysisService.ModelResponse(r.text(), r.inputTokens(), r.outputTokens(), r.reasoningTokens()),
+                new GeminiAnalysisService.ModelResponse(text, r.inputTokens(), r.outputTokens(), r.reasoningTokens()),
                 n, analyses, stats);
 
         List<NumericGrounding.StockInput> groundingInputs = new ArrayList<>();
@@ -214,7 +231,8 @@ public final class ModelExperimentRunner {
                 r.inputTokens(), r.outputTokens(), r.reasoningTokens(), cost,
                 true, base.stocksRequested(), base.stocksReturned(), base.stocksValid(),
                 base.issuesTotal(), base.issuesWithValidSources(), base.invalidSourceRefs(), base.issuesDroppedNoSource(),
-                base.avgIssueChars(), g.issuesWithNumbers(), g.issuesAllConfirmed(), g.unverifiedNumbers(), g.examples());
+                base.avgIssueChars(), g.issuesWithNumbers(), g.issuesAllConfirmed(), g.unverifiedNumbers(), g.examples(),
+                level, fo.attempts(), unwrapped);
     }
 
     // ===== 입력 읽기 (운영 공개 API, 읽기 전용) =====
@@ -268,7 +286,8 @@ public final class ModelExperimentRunner {
     // ===== result.json =====
 
     private static Map<String, Object> resultJson(OffsetDateTime ranAt, String base, Input input, int promptChars,
-                                                  String promptSha256, int runs, List<ModelOutcome> outcomes) {
+                                                  String promptSha256, int runs, List<ModelOutcome> outcomes,
+                                                  String schemaNote, Map<String, ProviderClient> clients) {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("ranAt", ranAt.toString());
         root.put("apiBase", base);
@@ -278,6 +297,12 @@ public final class ModelExperimentRunner {
         in.put("promptChars", promptChars);
         in.put("promptSha256", promptSha256);
         root.put("input", in);
+        // JSON_MODE·PROMPT_ONLY 호출에만 프롬프트 뒤에 덧붙인 문구 (모든 해당 모델에 같다)
+        Map<String, Object> note = new LinkedHashMap<>();
+        note.put("text", schemaNote);
+        note.put("chars", schemaNote.length());
+        note.put("appliedAtLevels", List.of(FormatLevel.JSON_MODE.name(), FormatLevel.PROMPT_ONLY.name()));
+        root.put("schemaNoteAppended", note);
         root.put("runsPerModel", runs);
         List<Object> models = new ArrayList<>();
         for (ModelOutcome o : outcomes) {
@@ -285,6 +310,7 @@ public final class ModelExperimentRunner {
             m.put("provider", o.spec().provider());
             m.put("model", o.spec().modelId());
             m.put("status", o.skippedNoKey() ? "SKIPPED_NO_KEY" : "RAN");
+            m.put("formatLadder", clients.get(o.spec().provider()).formatLadder(o.spec().modelId()));
             m.put("requestSettings", o.requestSettings());
             m.put("price", o.price());
             m.put("runs", o.runs());

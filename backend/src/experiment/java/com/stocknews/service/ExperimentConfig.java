@@ -16,12 +16,31 @@ final class ExperimentConfig {
     static final int DEFAULT_RUNS = 3;
     static final int MAX_RUNS = 5;
     static final int MAX_MODELS = 8;
-    static final Set<String> PROVIDERS = Set.of("gemini", "claude", "openai");
+    /** gemini(Gemma 포함) / claude / openai / OpenAI 호환 제공자(OpenAiProviderClient.COMPATIBLE 표) */
+    static final Set<String> PROVIDERS = providers();
 
     /** 모델 ID 는 영문·숫자·'.'·'-'·'_' 만 허용한다. 첫 글자는 영문·숫자. */
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
+    /** 요청 본문에 들어가는 제공자는 '/' 도 허용한다 (예: groq 의 openai/gpt-oss-20b). */
+    private static final Pattern MODEL_ID_WITH_SLASH = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,63}");
 
     private ExperimentConfig() {}
+
+    private static Set<String> providers() {
+        Set<String> p = new LinkedHashSet<>(List.of("gemini", "claude", "openai"));
+        p.addAll(CompatProviders.names());
+        return Set.copyOf(p);
+    }
+
+    /**
+     * 모델 ID 검증. '..' 와 맨 앞·맨 뒤의 '/' 는 거부한다. 모델 ID 가 URL 경로에 들어가는 gemini 는 '/' 도 거부한다
+     * (그 밖의 제공자는 요청 본문에 넣는다).
+     */
+    static boolean isValidModelId(String provider, String modelId) {
+        if (modelId == null || modelId.contains("..") || modelId.startsWith("/") || modelId.endsWith("/")) return false;
+        Pattern p = "gemini".equals(provider) ? MODEL_ID : MODEL_ID_WITH_SLASH;
+        return p.matcher(modelId).matches();
+    }
 
     record ModelSpec(String provider, String modelId) {
         String key() { return provider + ":" + modelId; }
@@ -42,10 +61,12 @@ final class ExperimentConfig {
             String provider = item.substring(0, colon).trim().toLowerCase(Locale.ROOT);
             String modelId = item.substring(colon + 1).trim();
             if (!PROVIDERS.contains(provider)) {
-                throw new IllegalArgumentException("모델 항목 " + (i + 1) + "번째의 제공자는 gemini, claude, openai 중 하나여야 합니다.");
+                throw new IllegalArgumentException("모델 항목 " + (i + 1) + "번째의 제공자는 "
+                        + String.join(", ", new java.util.TreeSet<>(PROVIDERS)) + " 중 하나여야 합니다.");
             }
-            if (!MODEL_ID.matcher(modelId).matches() || modelId.contains("..")) {
-                throw new IllegalArgumentException("모델 항목 " + (i + 1) + "번째의 모델 ID 는 영문·숫자·'.'·'-'·'_' 만 쓸 수 있습니다.");
+            if (!isValidModelId(provider, modelId)) {
+                throw new IllegalArgumentException("모델 항목 " + (i + 1) + "번째의 모델 ID 는 영문·숫자·'.'·'-'·'_' 만 쓸 수 있습니다"
+                        + ("gemini".equals(provider) ? "." : " ('/' 는 맨 앞·맨 뒤 제외, '..' 불가)."));
             }
             specs.add(new ModelSpec(provider, modelId));
         }

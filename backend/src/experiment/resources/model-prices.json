@@ -40,5 +40,32 @@
     "source": "https://developers.openai.com/api/docs/pricing",
     "checkedAt": "2026-11-18",
     "note": "최신 세대(GPT-6) 중 최저가. 이전 세대 gpt-5-nano 가 더 싸지만 세대가 달라 제외. 입력 272K 토큰 초과 구간은 단가가 다르다."
+  },
+  "upstage:solar-mini4": {
+    "inputPerMTok": 0.10,
+    "outputPerMTok": 0.40,
+    "source": "https://www.upstage.ai/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "USD, VAT 10% 별도"
+  },
+  "gemini:gemma-4-31b-it": {
+    "inputPerMTok": 0,
+    "outputPerMTok": 0,
+    "source": "https://aistudio.google.com/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "Gemini API 에서는 무료 등급만 제공(유료 등급 없음). 자체 서버에 설치할 경우의 비용은 포함하지 않음"
+  },
+  "gemini:gemma-4-26b-a4b-it": {
+    "inputPerMTok": 0,
+    "outputPerMTok": 0,
+    "source": "https://aistudio.google.com/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "Gemini API 에서는 무료 등급만 제공(유료 등급 없음). 자체 서버에 설치할 경우의 비용은 포함하지 않음"
+  },
+  "groq:openai/gpt-oss-20b": {
+    "inputPerMTok": 0.075,
+    "outputPerMTok": 0.30,
+    "source": "https://console.groq.com/docs/models",
+    "checkedAt": "2026-11-18"
   }
 }

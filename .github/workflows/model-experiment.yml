@@ -1,7 +1,7 @@
 name: Model experiment
 
 # 모델 선택 근거를 만들기 위한 실험: 운영 공개 API 의 종목·뉴스를 읽어, 운영과 같은 프롬프트·스키마로
-# Gemini / Claude / OpenAI 의 모델에 똑같이 보내고 결과를 잰다. 운영 서버(메모리 1GB)에는 올리지 않고 이 러너에서만 돈다.
+# Gemini(Gemma 포함) / Claude / OpenAI / OpenAI 호환(Upstage, CLOVA, Groq, DeepSeek) 의 모델에 똑같이 보내고 결과를 잰다. 운영 서버(메모리 1GB)에는 올리지 않고 이 러너에서만 돈다.
 # - 운영 DB·서버에는 쓰지 않는다 (공개 GET API 읽기만).
 # - 키가 없는 제공자는 호출하지 않고 SKIPPED_NO_KEY 로 표시한다.
 # - 호출한 모델이 하나도 성공하지 못했을 때만 job 이 실패한다. 결과 파일은 실패해도 아티팩트로 올린다.
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "비교할 모델 '제공자:모델ID' 쉼표 목록 (비우면 기본값 gemini:gemini-2.5-flash,claude:claude-haiku-5-5)"
+        description: "비교할 모델 '제공자:모델ID' 쉼표 목록 (비우면 기본 5개 모델). 제공자: gemini(Gemma 포함), claude, openai, upstage, clova, groq, deepseek. 예: gemini:gemini-2.5-flash,gemini:gemma-4-31b-it,claude:claude-haiku-5-5,openai:gpt-6-luna,upstage:solar-mini4,clova:HCX-007"
         required: false
         type: string
       runs:
@@ -51,6 +51,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
+          CLOVA_API_KEY: ${{ secrets.CLOVA_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           EXPERIMENT_MODELS: ${{ inputs.models }}
           EXPERIMENT_RUNS: ${{ inputs.runs }}
       - name: Add summary to job summary

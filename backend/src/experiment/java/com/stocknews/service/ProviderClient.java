@@ -14,7 +14,7 @@ interface ProviderClient {
         }
     }
 
-    /** gemini / claude / openai */
+    /** gemini / claude / openai / upstage / clova / groq / deepseek */
     String provider();
 
     /** 키가 설정되어 있는가 (없으면 호출하지 않고 SKIPPED_NO_KEY 로 표시한다). */
@@ -25,8 +25,15 @@ interface ProviderClient {
      * outputTokens 는 비용 계산에 쓰는 총 출력 토큰(생각·추론 토큰 포함), reasoningTokens 는 그중 알 수 있는 생각 토큰.
      *
      * @param schema 운영 응답 스키마(JSON Schema, 소문자 타입). 구현이 제공자 요건에 맞게 변환한다.
+     * @param level  이번 호출에 적용할 형식 강제 수준. 프롬프트의 스키마 요약 덧붙이기는 호출 측이 이미 했다.
      */
-    ProviderResult call(String modelId, String prompt, Map<String, Object> schema);
+    ProviderResult call(String modelId, String prompt, Map<String, Object> schema, FormatLevel level);
+
+    /**
+     * 이 모델에 시도할 형식 강제 수준의 순서(첫 번째가 처음 시도할 수준). 400 계열 거부 때만 다음 수준으로 내려간다.
+     * 한 수준뿐이면 내려가지 않는다.
+     */
+    List<FormatLevel> formatLadder(String modelId);
 
     /** 결과 문서에 적을, 이 모델에만 해당하는 요청 설정 설명. */
     List<String> requestSettings(String modelId);

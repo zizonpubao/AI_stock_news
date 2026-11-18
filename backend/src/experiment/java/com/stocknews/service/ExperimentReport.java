@@ -17,7 +17,7 @@ final class ExperimentReport {
     private ExperimentReport() {}
 
     static String render(OffsetDateTime ranAt, String apiBase, int stocks, int articles, int promptChars, int runs,
-                         List<ModelOutcome> outcomes) {
+                         List<ModelOutcome> outcomes, String schemaNote) {
         StringBuilder sb = new StringBuilder();
         sb.append("# 모델 비교 실험 결과\n\n");
         sb.append("- 실험 일시: ").append(ranAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss xxx", Locale.ROOT))).append("\n");
@@ -47,7 +47,7 @@ final class ExperimentReport {
         sb.append("\n소요 시간·토큰·비용은 호출이 성공한 반복만 집계했다. 호출 성공 = 응답 텍스트를 받음, JSON 해석 성공 = 운영 검증(parseAndValidate)이 예외 없이 끝남.\n\n");
 
         sb.append("## 형식·근거\n\n");
-        sb.append("| 모델 | 요청 종목 합 | 응답 종목 합 | 검증 통과 종목 합 | 이슈 총수 | 유효 근거 번호가 있는 이슈 | 범위 밖 근거 번호 | 근거 없어 버려진 이슈 | 근거 유효율 | 숫자 포함 이슈 | 숫자가 모두 확인된 이슈 | 수치 근거 일치율 |\n");
+        sb.append("| 모델 | 형식 강제 | 코드펜스 제거 | 요청 종목 합 | 응답 종목 합 | 검증 통과 종목 합 | 이슈 총수 | 유효 근거 번호가 있는 이슈 | 범위 밖 근거 번호 | 근거 없어 버려진 이슈 | 근거 유효율 | 숫자 포함 이슈 | 숫자가 모두 확인된 이슈 | 수치 근거 일치율 |\n");
         sb.append("|---|---|---|---|---|---|---|---|---|---|---|---|\n");
         for (ModelOutcome o : outcomes) {
             sb.append("| ").append(o.spec().key()).append(" | ");
@@ -87,7 +87,9 @@ final class ExperimentReport {
         sb.append("\n");
 
         sb.append("## 모델별로 달랐던 요청 설정\n\n");
-        sb.append("프롬프트 텍스트와 응답 스키마의 필드 구성, 최대 출력 한도(16000)는 모든 모델에 같다. 아래는 제공자 사정으로 달랐던 부분이다.\n\n");
+        sb.append("프롬프트 텍스트와 응답 스키마의 필드 구성, 최대 출력 한도(16000)는 모든 모델에 같다. 다만 형식 강제 수준이 JSON_MODE·PROMPT_ONLY 로 적용된 호출에는 ");
+        sb.append("프롬프트 뒤에 아래 스키마 요약 문구를 덧붙였고(모든 해당 모델에 같은 문구), 스키마로 강제된 수준(SCHEMA_STRICT·SCHEMA)의 프롬프트는 건드리지 않았다. 아래는 제공자 사정으로 달랐던 부분이다.\n\n");
+        sb.append("덧붙인 문구 (").append(schemaNote.length()).append("자):\n\n````text").append(schemaNote).append("````\n\n");
         for (ModelOutcome o : outcomes) {
             sb.append("**").append(o.spec().key()).append("**\n\n");
             for (String s : o.requestSettings()) sb.append("- ").append(s).append("\n");
@@ -118,6 +120,7 @@ final class ExperimentReport {
         sb.append("- 수치 근거 일치율의 한계: ① \"2조\"와 \"20,000억\"처럼 표기가 달라도 같은 값이면 불일치로 잡힌다. ② 모델이 기사 숫자로 계산한 합계·증감도 불일치로 잡힌다. ③ 날짜·분기·순번의 숫자도 포함된다. ④ 인용 기사에 같은 숫자가 있으면 맥락이 달라도 일치로 잡힌다. 따라서 환각의 증명이 아니라 숫자 문자열이 인용 기사에 있는지의 점검이다.\n");
         sb.append("- 출력 토큰은 제공자별 보고 방식을 맞춰 생각·추론 토큰을 포함한다. 생각 토큰은 보고하는 제공자만 따로 적고, 미보고는 확인하지 못했다는 뜻이다.\n");
         sb.append("- 소요 시간에는 SDK·호출 코드의 재시도와 대기가 포함된다. 같은 모델의 반복 사이에도 서버 상태에 따라 편차가 있다.\n");
+        sb.append("- 형식 강제 수준이 모델마다 달라서 \"JSON 해석 성공\"의 의미가 같지 않다. SCHEMA_STRICT·SCHEMA 는 제공자가 형식을 강제한 결과이고, JSON_MODE·PROMPT_ONLY 는 프롬프트 지시와 코드펜스·앞뒤 문장 제거(첫 JSON 객체/배열 추출)에 기댄 결과다. 수준이 다른 모델의 형식 성공률을 같은 잣대로 비교하지 않는다.\n");
         sb.append("- 같은 입력으로 반복 호출한 표본이 작아 통계적 유의성은 검증하지 않았다. 판단은 사람이 한다.\n\n");
 
         sb.append("## 확인되지 않은 숫자 예시\n\n");
@@ -137,6 +140,18 @@ final class ExperimentReport {
             sb.append("\n");
         }
         if (!anyExample) sb.append("없음 (또는 호출한 모델이 없음)\n");
+        return sb.toString();
+    }
+
+    /** 적용된 형식 강제 수준 표기. 한 가지뿐이면 이름만, 섞였으면 횟수와 함께 */
+    private static String levels(Map<String, Integer> m) {
+        if (m == null || m.isEmpty()) return "-";
+        if (m.size() == 1) return m.keySet().iterator().next();
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Integer> e : m.entrySet()) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(e.getKey()).append(" ").append(e.getValue()).append("회");
+        }
         return sb.toString();
     }
 
