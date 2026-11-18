@@ -270,7 +270,7 @@ public class GeminiAnalysisService {
     // ===== 수치 근거 측정 =====
 
     /**
-     * 저장될 분석의 이슈 문장 속 숫자가 인용 기사(제목+요약)에 있는지 센다. 측정만 하고 문장은 걸러내거나 고치지 않는다.
+     * 저장될 분석의 이슈 문장 속 숫자가 인용 기사(제목+모델에게 보여 준 본문 또는 요약)에 있는지 센다. 측정만 하고 문장은 걸러내거나 고치지 않는다.
      * 한계: 표기가 다른 같은 값("2조"와 "20,000억")을 불일치로 잡으므로 자동으로 지우면 정상 문장도 지워진다 (NumericGrounding 설명 참고).
      */
     static NumericGrounding.Result measureNumbers(List<Stock> targets, List<List<NewsArticle>> targetNews,
@@ -280,7 +280,8 @@ public class GeminiAnalysisService {
             int idx = e.getKey();
             List<String> texts = new ArrayList<>();
             for (NewsArticle a : targetNews.get(idx)) {
-                texts.add(NumericGrounding.articleText(a.getTitle(), a.getDescription(), MAX_DESCRIPTION_CHARS));
+                // 프롬프트에 실제로 들어간 글(본문 또는 요약)과 같은 글로 대조한다
+                texts.add(NumericGrounding.articleText(a.getTitle(), shownText(a), Integer.MAX_VALUE));
             }
             inputs.add(new NumericGrounding.StockInput(targets.get(idx).getName(), texts, e.getValue().issues()));
         }
@@ -360,7 +361,11 @@ public class GeminiAnalysisService {
     String buildPrompt(List<Stock> stocks, List<List<NewsArticle>> newsLists, boolean includeNumbersGuideline) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 한국 주식시장 뉴스를 요약·분석하는 도우미입니다.\n");
-        sb.append("아래 '뉴스 데이터' 블록에는 종목별로 번호가 매겨진 뉴스(제목, 요약)가 들어 있습니다.\n\n");
+        // 본문이 들어간 기사가 하나라도 있을 때만 입력 설명을 바꾼다 (본문이 없으면 이전 프롬프트와 글자 하나 다르지 않다)
+        boolean anyBody = newsLists.stream().anyMatch(l -> l.stream().anyMatch(GeminiAnalysisService::hasBody));
+        sb.append(anyBody
+                ? "아래 '뉴스 데이터' 블록에는 종목별로 번호가 매겨진 뉴스(제목, 본문 앞부분 또는 요약)가 들어 있습니다.\n\n"
+                : "아래 '뉴스 데이터' 블록에는 종목별로 번호가 매겨진 뉴스(제목, 요약)가 들어 있습니다.\n\n");
         sb.append("[지침]\n");
         sb.append("1. 주요 이슈(issues)는 제공된 뉴스에 있는 내용만 쓰고, 각 이슈의 sources 에 근거가 된 뉴스 번호를 반드시 넣으세요. ");
         sb.append("번호는 해당 종목 안에서의 뉴스 번호입니다.\n");
@@ -379,13 +384,27 @@ public class GeminiAnalysisService {
             for (int j = 0; j < articles.size(); j++) {
                 NewsArticle a = articles.get(j);
                 sb.append("[뉴스 ").append(j + 1).append("] ").append(clean(a.getTitle())).append("\n");
-                String desc = clean(a.getDescription());
-                if (!desc.isEmpty()) sb.append("  요약: ").append(truncate(desc, MAX_DESCRIPTION_CHARS)).append("\n");
+                String shown = shownText(a);
+                if (!shown.isEmpty()) sb.append(hasBody(a) ? "  본문: " : "  요약: ").append(shown).append("\n");
             }
         }
         sb.append("\n<<<뉴스 데이터 끝>>>\n");
         if (includeNumbersGuideline) sb.append(NUMBERS_GUIDELINE);
         return sb.toString();
+    }
+
+    /** 추출한 본문이 있는 기사인지 */
+    static boolean hasBody(NewsArticle a) {
+        return a != null && !clean(a.getBody()).isEmpty();
+    }
+
+    /**
+     * 모델에게 보여 주는 기사 한 건의 글. 본문이 있으면 본문(수집 단계에서 이미 문장 끝으로 길이를 맞춘 것),
+     * 없으면 요약을 MAX_DESCRIPTION_CHARS 까지. buildPrompt 와 measureNumbers 가 같은 글을 쓰도록 하나로 둔다.
+     */
+    static String shownText(NewsArticle a) {
+        if (hasBody(a)) return clean(a.getBody());
+        return truncate(clean(a.getDescription()), MAX_DESCRIPTION_CHARS);
     }
 
     /** 뉴스 본문이 구분자를 흉내 내 데이터 블록을 벗어나지 못하도록 구분자 문자를 제거하고 공백을 정리한다. */

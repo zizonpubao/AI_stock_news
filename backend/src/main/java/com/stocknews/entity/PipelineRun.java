@@ -63,6 +63,13 @@ public class PipelineRun {
     /** 그중 인용 기사(제목+요약)에서 같은 표기를 찾지 못한 숫자 수. 표기가 다른 같은 값도 포함되므로 환각 수가 아니다. */
     private Integer numbersUnverified;
 
+    /** 본문을 AI 입력으로 쓴 기사 수 (BODY). 수집 단계에 도달하지 못한 실행은 null, 기능이 꺼져 있으면 0 */
+    private Integer bodiesUsed;
+    /** robots 때문에 가져오지 않은 기사 수 (ROBOTS_DISALLOWED + AI_DISALLOWED + ROBOTS_UNKNOWN) */
+    private Integer bodiesRobotsExcluded;
+    /** 가져오려 했지만 실패한 기사 수 (FETCH_FAILED + EXTRACT_FAILED + BUDGET_EXCEEDED + INVALID_URL) */
+    private Integer bodiesFailed;
+
     /** OK / COLLECT_FAILED / AI_CALL_FAILED / PARTIAL / ERROR */
     @Column(length = 30)
     private String outcome;

@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stocknews.entity.NewsArticle;
 import com.stocknews.entity.Stock;
 import com.stocknews.repository.NewsRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,11 +27,26 @@ import java.util.regex.Pattern;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class NewsService {
+
+    /** 종목 한 개의 본문 수집 총 시간 예산. 넘으면 남은 기사는 BUDGET_EXCEEDED (이미 시작한 요청은 끝까지 기다린다). */
+    static final long BODY_BUDGET_MS = 20_000;
 
     private final NewsRepository newsRepository;
     private final ObjectMapper objectMapper;
+    private final ArticleBodyFetcher bodyFetcher;
+
+    @Autowired
+    public NewsService(NewsRepository newsRepository, ObjectMapper objectMapper, ArticleBodyFetcher bodyFetcher) {
+        this.newsRepository = newsRepository;
+        this.objectMapper = objectMapper;
+        this.bodyFetcher = bodyFetcher;
+    }
+
+    /** 본문 수집을 쓰지 않는 구성 (기존 호출·테스트 호환) */
+    public NewsService(NewsRepository newsRepository, ObjectMapper objectMapper) {
+        this(newsRepository, objectMapper, ArticleBodyFetcher.disabled());
+    }
 
     @Value("${naver.api.client-id}")
     private String clientId;
@@ -80,7 +95,9 @@ public class NewsService {
                     .block(Duration.ofSeconds(10)); // 응답이 없을 때 무한 대기하지 않도록 제한
 
             // 응답을 해석하지 못하면 예외 → 아래 catch 에서 실패로 처리
-            for (NewsArticle article : parseNews(response, stock.getName(), ZonedDateTime.now())) {
+            List<NewsArticle> parsed = parseNews(response, stock.getName(), ZonedDateTime.now());
+            attachBodies(parsed, BODY_BUDGET_MS); // 실패해도 예외를 던지지 않고 기사별 상태로만 남긴다
+            for (NewsArticle article : parsed) {
                 article.setStock(stock);
                 newsRepository.save(article);
                 articles.add(article);
@@ -93,6 +110,41 @@ public class NewsService {
             // 실패를 "뉴스 없음"으로 위장하지 않는다. 호출 측이 success=false 를 보고 상태를 FAILED 로 기록한다.
             log.error("뉴스 수집 실패 ({}): {}", stock.getName(), e.getMessage());
             return new NewsFetchResult(List.of(), false);
+        }
+    }
+
+    /**
+     * 저장할 기사마다 본문을 가져와 body·bodyStatus·bodyChars 를 채운다. 어떤 경우에도 예외를 던지지 않으며
+     * 기사 목록 자체는 바꾸지 않는다. budgetMs 를 넘기면 남은 기사는 BUDGET_EXCEEDED.
+     */
+    void attachBodies(List<NewsArticle> articles, long budgetMs) {
+        long start = System.nanoTime();
+        for (NewsArticle article : articles) {
+            ArticleBodyFetcher.BodyResult result;
+            try {
+                if (!bodyFetcher.isEnabled()) {
+                    result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.DISABLED, null);
+                } else if ((System.nanoTime() - start) / 1_000_000 >= budgetMs) {
+                    result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.BUDGET_EXCEEDED, null);
+                } else {
+                    result = bodyFetcher.fetch(article.getOriginalLink(), article.getLink());
+                }
+            } catch (Exception e) {
+                result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.FETCH_FAILED, null);
+            }
+            if (result == null) result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.FETCH_FAILED, null);
+            boolean used = ArticleBodyFetcher.BODY.equals(result.status())
+                    && result.text() != null && !result.text().isBlank();
+            if (used) {
+                article.setBody(result.text());
+                article.setBodyStatus(ArticleBodyFetcher.BODY);
+                article.setBodyChars(result.text().length());
+            } else {
+                article.setBody(null);
+                article.setBodyStatus(ArticleBodyFetcher.BODY.equals(result.status())
+                        ? ArticleBodyFetcher.EXTRACT_FAILED : result.status());
+                article.setBodyChars(null);
+            }
         }
     }
 
@@ -154,6 +206,7 @@ public class NewsService {
             article.setTitle(title);
             article.setDescription(cleanHtml(item.path("description").asText("")));
             article.setLink(link);
+            article.setOriginalLink(item.path("originallink").asText(""));
             article.setPubDate(pubDateStr);
             result.add(article);
             keptTitles.add(normalized);

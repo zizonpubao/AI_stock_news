@@ -7,6 +7,7 @@ import com.stocknews.entity.Stock;
 import com.stocknews.repository.PipelineRunRepository;
 import com.stocknews.repository.StockRepository;
 import com.stocknews.service.ArchiveService;
+import com.stocknews.service.ArticleBodyFetcher;
 import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.MarketPriceService;
 import com.stocknews.service.NewsService;
@@ -180,6 +181,8 @@ public class StockScheduler {
                 recordNewsStatus(stock, status);
             }
 
+            applyBodyCounts(run, newsMap);
+
             // 3단계: Gemini AI 분석 → 10개 종목 한 번에 요청 (API 1회 호출)
             GeminiAnalysisService.AnalysisSummary summary = geminiAnalysisService.analyzeAllStocks(stocks, newsMap);
             if (summary != null) log.info("AI 분석 요약: {}", summary);
@@ -201,6 +204,30 @@ public class StockScheduler {
         } finally {
             saveRun(run, outcome, startNanos);
         }
+    }
+
+    /** 기사별 본문 수집 상태를 세어 실행 기록에 옮긴다. 기능이 꺼져 있으면(DISABLED) 세 값 모두 0 이다. */
+    static void applyBodyCounts(PipelineRun run, Map<Long, List<NewsArticle>> newsMap) {
+        int used = 0, robotsExcluded = 0, failed = 0;
+        for (List<NewsArticle> articles : newsMap.values()) {
+            if (articles == null) continue;
+            for (NewsArticle a : articles) {
+                String st = a.getBodyStatus();
+                if (st == null) continue;
+                switch (st) {
+                    case ArticleBodyFetcher.BODY -> used++;
+                    case ArticleBodyFetcher.ROBOTS_DISALLOWED, ArticleBodyFetcher.AI_DISALLOWED,
+                         ArticleBodyFetcher.ROBOTS_UNKNOWN -> robotsExcluded++;
+                    case ArticleBodyFetcher.FETCH_FAILED, ArticleBodyFetcher.EXTRACT_FAILED,
+                         ArticleBodyFetcher.BUDGET_EXCEEDED, ArticleBodyFetcher.INVALID_URL -> failed++;
+                    default -> { }
+                }
+            }
+        }
+        run.setBodiesUsed(used);
+        run.setBodiesRobotsExcluded(robotsExcluded);
+        run.setBodiesFailed(failed);
+        log.info("본문 수집 결과 - 사용 {}, robots 로 제외 {}, 실패 {}", used, robotsExcluded, failed);
     }
 
     /** AI 분석 요약을 실행 기록에 옮기고 사이클의 결론 코드를 돌려준다. */
