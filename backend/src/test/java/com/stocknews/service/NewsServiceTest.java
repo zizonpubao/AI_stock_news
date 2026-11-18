@@ -206,4 +206,114 @@ class NewsServiceTest {
         String c = NewsService.normalizeTitle("가나전자 신제품 공개", "가나전자");
         assertThat(NewsService.isSimilarTitle(a, c)).isFalse();
     }
+
+    // ---- 종목명이 다른 단어의 앞부분으로만 나오는 기사(다른 회사) 제외 ----
+
+    @Test
+    @DisplayName("에스엠 종목: 에스엠벡셀 기사는 제외하고 에스엠 기사는 통과시킨다")
+    void ownWordSm() {
+        assertThat(NewsService.mentionsAsOwnWord("에스엠벡셀, 군용 통신장비용 배터리 공급계약", "에스엠")).isFalse();
+        assertThat(NewsService.mentionsAsOwnWord("에스엠 주가 상한가", "에스엠")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord(
+                "[주식마감] '한한령 완화 기대감'에 에스엠·스튜디오드래곤 '上'", "에스엠")).isTrue();
+    }
+
+    @Test
+    @DisplayName("삼성전자 종목: 삼성전자우 기사는 제외하고 조사·쉼표가 붙은 기사는 통과시킨다")
+    void ownWordSamsung() {
+        assertThat(NewsService.mentionsAsOwnWord("삼성전자우 주가, 11월 18일 158,000원", "삼성전자")).isFalse();
+        assertThat(NewsService.mentionsAsOwnWord("삼성전자는 3분기 실적 발표", "삼성전자")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord("삼성전자의 신제품 공개", "삼성전자")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord("삼성전자, 연휴 앞두고 3%대 급등마감", "삼성전자")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord("SK하이닉스發 훈풍에 삼성전자 상승", "SK하이닉스")).isTrue();
+    }
+
+    @Test
+    @DisplayName("삼성전자우 종목: 삼성전자우 기사는 통과시킨다")
+    void ownWordSamsungPreferred() {
+        assertThat(NewsService.mentionsAsOwnWord("삼성전자우 주가, 11월 18일 158,000원", "삼성전자우")).isTrue();
+    }
+
+    @Test
+    @DisplayName("두산 종목: 두산에너빌리티 기사는 제외하고 조사 에가 붙은 두산 기사는 통과시킨다")
+    void ownWordDoosan() {
+        assertThat(NewsService.mentionsAsOwnWord("두산에너빌리티 자금 투입", "두산")).isFalse();
+        assertThat(NewsService.mentionsAsOwnWord("두산에 대한 투자의견 상향", "두산")).isTrue();
+    }
+
+    @Test
+    @DisplayName("꼬리는 접두가 아니라 전체가 허용 목록과 같아야 한다 (에너빌리티는 조사 에로 통과하지 않는다)")
+    void tailMustMatchWholly() {
+        assertThat(NewsService.mentionsAsOwnWord("두산에너빌리티", "두산")).isFalse();
+        assertThat(NewsService.mentionsAsOwnWord("두산에서 발표", "두산")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord("두산이엔티 인수", "두산")).isFalse();
+    }
+
+    @Test
+    @DisplayName("한 제목에 종목명이 두 번 나오면 하나라도 독립 등장이면 통과한다")
+    void ownWordAnyPosition() {
+        assertThat(NewsService.mentionsAsOwnWord("에스엠벡셀·에스엠 동반 상승", "에스엠")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord("에스엠벡셀·에스엠벡셀 동반 상승", "에스엠")).isFalse();
+    }
+
+    @Test
+    @DisplayName("허용 목록의 꼬리가 붙은 실제 기사 제목은 통과한다 (2026-11-18 아카이브·운영 수집분에서 발췌)")
+    void allowedTailsFromRealTitles() {
+        String[][] cases = {
+                {"삼성전자", "클레온, 삼성전자와 '게임스컴 2026' 참가"},
+                {"SK하이닉스", "삼성전자, 3.4% 급등 마감…SK하이닉스는 6.4% 뛰어(종합)"},
+                {"SK하이닉스", "삼성전자, 연휴 앞두고 3%대 급등마감…SK하이닉스도 1.2%↑(종합)"},
+                {"현대차", "도요타가 꽉 잡은 美 하이브리드 시장... 현대차가 '정면승부' 나섰다"},
+                {"삼성SDI", "AI는 전기를 먹고 로봇은 배터리로 걷는다···삼성SDI의 다음 무대는"},
+                {"삼성전기", "삼성전기에 꽂힌 상위 1%, 하나마이크론·심텍은 팔았다"},
+                {"셀트리온", "지투지바이오, 셀트리온과 손잡고 SC 항체 플랫폼 확장"},
+                {"JYP Ent.", "BTS 공연 ‘글로벌 대박’ 쳤는데…엔터 4사 목표가, JYP Ent.만 올라"},
+                {"SK하이닉스", "中 CXMT, 삼성전자·SK하이닉스보다 먼저 LPDDR6 스마트폰 상용화"},
+                {"두산에너빌리티", "[N2 증시 풍향계] 두산에너빌리티부터 오르비텍까지 원전株 ‘불기둥’"},
+                {"삼성전기", "삼성전자·SK하이닉스에 삼성전기까지…퇴직연금 ETF 상장"},
+                {"SK텔레콤", "[카카오, 둘로 다시 뛴다] SK텔레콤처럼 둘로 나뉘는 카카오"},
+                {"삼성전기", "장덕현 삼성전기사장, 경남 협력사 찾아가 '동반성장' 머리맞댔다"},
+                {"현대차", "현대차 ‘전면파업’에 기아도 ‘불안’…현대차그룹 ‘흔들’"},
+                {"현대차", "현대차그룹주, 8월 글로벌 판매 호조"},
+        };
+        for (String[] c : cases) {
+            assertThat(NewsService.mentionsAsOwnWord(c[1], c[0])).as("%s / %s", c[0], c[1]).isTrue();
+        }
+        // 목록의 각 꼬리를 종목명 바로 뒤에 붙여도 통과한다 (데이터에서 관찰하지 못한 문법상 조사 포함)
+        for (String tail : NewsService.ALLOWED_NAME_TAILS) {
+            assertThat(NewsService.mentionsAsOwnWord("가나전자" + tail + " 소식", "가나전자")).as(tail).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("실제 운영에서 걸러져야 했던 다른 회사 기사 제목은 제외한다")
+    void excludesRealOtherCompanyTitles() {
+        assertThat(NewsService.mentionsAsOwnWord("에스엠벡셀, 군용 무전기·전술통신장비 배터리 공급계약", "에스엠")).isFalse();
+        assertThat(NewsService.mentionsAsOwnWord("카카오뱅크, '개인사업자 신용대출' 네이버페이 대출비교 입점", "카카오")).isFalse();
+        assertThat(NewsService.mentionsAsOwnWord("삼성전자서비스, 추석 연휴에도 수리 서비스", "삼성전자")).isFalse();
+    }
+
+    @Test
+    @DisplayName("종목명이 null 이거나 비어 있으면 기존처럼 단순 포함 여부만 따른다")
+    void ownWordNullOrEmptyName() {
+        assertThat(NewsService.mentionsAsOwnWord("아무 제목", "")).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord("아무 제목", null)).isTrue();
+        assertThat(NewsService.mentionsAsOwnWord(null, "에스엠")).isFalse();
+    }
+
+    @Test
+    @DisplayName("parseNews: 에스엠벡셀 기사 3건과 에스엠 기사 2건이 섞여 있으면 에스엠 기사만 남긴다")
+    void parseNewsDropsOtherCompany() throws IOException {
+        String json = body(
+                item("에스엠벡셀, 군용 통신장비용 배터리 공급계약", NOW.minusHours(1), "https://a.com/1"),
+                item("에스엠 주가 상한가", NOW.minusHours(2), "https://a.com/2"),
+                item("에스엠벡셀, 군용 무전기·전술통신장비 배터리 공급계약", NOW.minusHours(3), "https://a.com/3"),
+                item("[주식마감] '한한령 완화 기대감'에 에스엠·스튜디오드래곤 '上'", NOW.minusHours(4), "https://a.com/4"),
+                item("에스엠벡셀 2차전지 증설 검토", NOW.minusHours(5), "https://a.com/5"));
+
+        List<NewsArticle> result = service.parseNews(json, "에스엠", NOW);
+
+        assertThat(result).extracting(NewsArticle::getTitle).containsExactly(
+                "에스엠 주가 상한가", "[주식마감] '한한령 완화 기대감'에 에스엠·스튜디오드래곤 '上'");
+    }
 }

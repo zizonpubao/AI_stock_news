@@ -117,6 +117,7 @@ public class NewsService {
         List<String> keptTitles = new ArrayList<>();   // 채택한 기사의 정규화 제목 (중복 비교용)
         Set<String> keptLinks = new HashSet<>();
         int duplicates = 0;
+        int otherCompany = 0;
         for (JsonNode item : items) {
             if (result.size() >= 5) break;
 
@@ -131,6 +132,12 @@ public class NewsService {
             String title = cleanHtml(item.path("title").asText(""));
             if (!title.contains(stockName)) {
                 log.debug("종목명 미포함 제외: {}", title);
+                continue;
+            }
+            // 종목명이 다른 단어의 앞부분으로만 나오는 기사(예: 에스엠 종목의 "에스엠벡셀")는 다른 회사 기사로 본다
+            if (!mentionsAsOwnWord(title, stockName)) {
+                otherCompany++;
+                log.debug("다른 단어 일부로만 종목명이 나와 제외: {}", title);
                 continue;
             }
 
@@ -152,8 +159,55 @@ public class NewsService {
             keptTitles.add(normalized);
             if (!link.isBlank()) keptLinks.add(link);
         }
-        log.debug("중복 기사 {}건 제외 ({}): 최종 {}건", duplicates, stockName, result.size());
+        log.debug("중복 기사 {}건, 다른 단어 일부로만 종목명이 나온 기사 {}건 제외 ({}): 최종 {}건",
+                duplicates, otherCompany, stockName, result.size());
         return result;
+    }
+
+    /**
+     * 종목명 바로 뒤에 붙어도 같은 종목을 가리키는 것으로 보는 꼬리(종목명 뒤 연속된 한글·영문·숫자 문자열).
+     * 꼬리 전체가 항목과 정확히 같아야 한다(접두 일치 금지: "두산에너빌리티"의 "에너빌리티"는 조사 "에"로 통과하지 않는다).
+     * <p>근거: 2026-11-18 아카이브(36거래일, 기사 1,487건)와 같은 날 운영 수집분 47건의 제목에서 종목명 뒤 꼬리를 쟀다.
+     * 관찰된 정상 꼬리는 와, 는, 도, 가, 의, 에, 과, 만, 보다, 부터, 까지, 처럼, 사장, 그룹, 그룹주 이고,
+     * 은, 이, 을, 를, 로, 에서, 에게 와 둘째 줄의 겹친 조사(에도, 에는, 와의 등)는 데이터에서 관찰하지 못했고
+     * 문법상 조사라서 넣었다(조사를 넣어도 다른 회사 이름이 통과할 위험은 낮고, 빠뜨리면 정상 기사를 버린다).
+     * <p>부작용(같은 데이터로 측정): 아카이브 1,487건 중 29건(1.9%)이 제외된다. 그중 13건은 따로 상장된 회사
+     * (카카오뱅크·카카오게임즈·카카오페이) 기사이고, 14건은 자회사·브랜드(삼성전자서비스, 카카오엔터 등) 기사,
+     * 2건은 ETF 상품명 기사다. 자회사 기사는 제목에 종목명이 독립 단어로 없으면 함께 제외된다.
+     * (發, 株, 上 같은 한자는 한글·영문·숫자가 아니라 꼬리가 비므로 목록 없이 통과한다.)
+     * <p>한계: 목록에 없는 새 표현이 붙은 정상 기사는 제외된다. 종목명과 정확히 같은 이름을 쓰는 다른 회사,
+     * 종목명 앞에 다른 글자가 붙은 경우(앞 글자는 검사하지 않는다)는 걸러내지 못한다.
+     */
+    static final Set<String> ALLOWED_NAME_TAILS = Set.of(
+            "은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "도", "만", "로",
+            "에서", "에게", "까지", "부터", "보다", "처럼",
+            "에도", "에는", "엔", "와의", "과의", "에서도", "으로", "만의", "에만", "로부터", "마저", "조차",
+            "사장", "그룹", "그룹주");
+
+    /**
+     * 제목에서 종목명이 한 번이라도 독립된 단어(꼬리 없음)이거나 허용된 꼬리(조사 등)와 함께 나오면 true.
+     * 모든 등장 위치가 다른 단어의 앞부분(예: 에스엠 → 에스엠벡셀)이면 false. 종목명이 없거나 비어 있으면 기존대로
+     * 단순 포함 여부를 따른다. 네트워크·DB 를 쓰지 않는 순수 함수.
+     */
+    static boolean mentionsAsOwnWord(String title, String stockName) {
+        if (title == null) return false;
+        if (stockName == null || stockName.isEmpty()) return title.contains(stockName == null ? "" : stockName);
+        int idx = title.indexOf(stockName);
+        if (idx < 0) return false;
+        while (idx >= 0) {
+            int start = idx + stockName.length();
+            int end = start;
+            while (end < title.length() && isNameChar(title.charAt(end))) end++;
+            String tail = title.substring(start, end);
+            if (tail.isEmpty() || ALLOWED_NAME_TAILS.contains(tail)) return true;
+            idx = title.indexOf(stockName, idx + 1);
+        }
+        return false;
+    }
+
+    private static boolean isNameChar(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                || (c >= '가' && c <= '힣');
     }
 
     /** 제목 유사도가 이 값 이상이면 같은 기사로 본다. 문자 2-gram 자카드 기준. */
