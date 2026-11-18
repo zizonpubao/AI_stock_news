@@ -3,6 +3,7 @@ package com.stocknews.scheduler;
 import com.stocknews.entity.NewsArticle;
 import com.stocknews.entity.NewsStatus;
 import com.stocknews.entity.Stock;
+import com.stocknews.repository.PipelineRunRepository;
 import com.stocknews.repository.StockRepository;
 import com.stocknews.service.ArchiveService;
 import com.stocknews.service.GeminiAnalysisService;
@@ -39,7 +40,7 @@ class StockSchedulerNewsStatusTest {
     @BeforeEach
     void setUp() {
         scheduler = new StockScheduler(crawler, newsService, gemini, mock(ArchiveService.class),
-                mock(MarketPriceService.class), stockRepository);
+                mock(MarketPriceService.class), stockRepository, mock(PipelineRunRepository.class));
         when(crawler.crawlAndSaveTop10()).thenReturn(List.of(stock));
     }
 

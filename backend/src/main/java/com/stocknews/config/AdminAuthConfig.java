@@ -15,6 +15,6 @@ public class AdminAuthConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(adminTokenInterceptor)
-                .addPathPatterns("/api/stocks/refresh", "/api/archive/run");
+                .addPathPatterns("/api/stocks/refresh", "/api/archive/run", "/api/admin/**");
     }
 }

@@ -10,6 +10,10 @@ export const fetchStockNews = (id) => api.get(`/stocks/${id}/news`).then(r => r.
 export const fetchHealth = () => api.get('/health').then(r => r.data);
 export const fetchIndices = () => api.get('/market/indices').then(r => r.data);
 
+// 최근 N시간 수집·AI 분석 실행 현황
+export const fetchRunSummary = (hours = 24) =>
+  api.get('/runs/summary', { params: { hours } }).then(r => r.data);
+
 // 날짜별 아카이브
 export const fetchArchiveDates = () => api.get('/archive/dates').then(r => r.data);
 export const fetchArchiveStocks = (date) => api.get(`/archive/${date}/stocks`).then(r => r.data);

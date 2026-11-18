@@ -145,6 +145,13 @@ public class GeminiAnalysisService {
         return new AnalysisSummary(null, targets.size(), 0, targets.size(), skipped, null, null, elapsed(startedAt));
     }
 
+    /** 설정된 모델 이름 목록 (공백 제거). 실험 서비스가 기본 모델 목록으로 쓴다. */
+    List<String> configuredModels() {
+        List<String> list = new ArrayList<>();
+        if (geminiModels != null) for (String m : geminiModels) if (m != null && !m.isBlank()) list.add(m.trim());
+        return list;
+    }
+
     private static long elapsed(long startedAt) {
         return System.currentTimeMillis() - startedAt;
     }
@@ -305,6 +312,22 @@ public class GeminiAnalysisService {
      */
     static Map<Integer, StockAnalysis> parseAndValidate(ObjectMapper mapper, String json, int[] newsCounts)
             throws java.io.IOException {
+        return parseAndValidate(mapper, json, newsCounts, null);
+    }
+
+    /** 검증 중 버려지는 것들의 개수를 모으는 집계기 (모델 비교 실험용). 운영 경로는 null 을 넘긴다. */
+    static final class ValidationStats {
+        /** 범위 안의 stockIndex 로 응답에 들어 있던 서로 다른 종목 수 */
+        final Set<Integer> returnedIndexes = new HashSet<>();
+        int issuesTotal;
+        int issuesWithValidSources;
+        int invalidSourceRefs;
+        int issuesDroppedNoSource;
+    }
+
+    /** 위 메서드와 같은 검증을 하면서, stats 가 있으면 버려진 항목 수를 센다. 검증 결과는 stats 유무와 무관하다. */
+    static Map<Integer, StockAnalysis> parseAndValidate(ObjectMapper mapper, String json, int[] newsCounts,
+                                                        ValidationStats stats) throws java.io.IOException {
         JsonNode root = mapper.readTree(json);
         JsonNode items = root == null ? null : (root.isArray() ? root : root.get("stocks"));
         if (items == null || !items.isArray()) {
@@ -318,6 +341,7 @@ public class GeminiAnalysisService {
             int idx = idxNode.intValue() - 1;
             if (idx < 0 || idx >= newsCounts.length) continue;
             if (result.containsKey(idx)) continue; // 같은 종목이 중복되면 첫 항목만
+            if (stats != null) stats.returnedIndexes.add(idx);
 
             List<Issue> issues = new ArrayList<>();
             JsonNode issueNodes = item.path("issues");
@@ -325,7 +349,12 @@ public class GeminiAnalysisService {
                 for (JsonNode in : issueNodes) {
                     if (issues.size() >= MAX_ISSUES) break;
                     String text = truncate(normalize(in.path("text").asText("")), MAX_ISSUE_CHARS);
-                    List<Integer> sources = validSources(in.path("sources"), newsCounts[idx]);
+                    List<Integer> sources = validSources(in.path("sources"), newsCounts[idx], stats);
+                    if (stats != null) {
+                        stats.issuesTotal++;
+                        if (sources.isEmpty()) stats.issuesDroppedNoSource++;
+                        else stats.issuesWithValidSources++;
+                    }
                     if (text.isEmpty() || sources.isEmpty()) continue;
                     issues.add(new Issue(text, sources));
                 }
@@ -343,14 +372,16 @@ public class GeminiAnalysisService {
         return result;
     }
 
-    private static List<Integer> validSources(JsonNode node, int newsCount) {
+    private static List<Integer> validSources(JsonNode node, int newsCount, ValidationStats stats) {
         TreeSet<Integer> valid = new TreeSet<>();
         if (node.isArray()) {
             for (JsonNode n : node) {
+                boolean ok = false;
                 if (n.isNumber() && n.canConvertToInt()) {
                     int v = n.intValue();
-                    if (v >= 1 && v <= newsCount) valid.add(v);
+                    if (v >= 1 && v <= newsCount) { valid.add(v); ok = true; }
                 }
+                if (!ok && stats != null) stats.invalidSourceRefs++;
             }
         }
         return new ArrayList<>(valid);
