@@ -3,6 +3,8 @@ package com.stocknews.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -27,7 +29,16 @@ final class ExperimentStats {
             Double avgIssueChars,
             int issuesWithNumbers, int issuesAllNumbersConfirmed, int unverifiedNumbers,
             List<NumericGrounding.Unverified> unverifiedExamples,
-            String formatLevel, List<String> formatAttempts, boolean unwrapped) {}
+            String formatLevel, List<String> formatAttempts, boolean unwrapped,
+            String variant, int issuesEvaluated, int numbersTotal,
+            /** outputs.json·outputs.md 용 이슈 문장. result.json 에는 넣지 않는다(크기). */
+            @JsonIgnore List<StockOut> outputs) {}
+
+    /** 저장용: 한 종목(요청 목록의 0부터 번호)의 검증 통과 이슈 문장 */
+    public record StockOut(int stockIndex, List<IssueOut> issues) {}
+
+    /** 이슈 문장, 근거 번호(1부터), 인용 기사에서 확인되지 않은 숫자 */
+    public record IssueOut(String text, List<Integer> sources, List<String> unverified) {}
 
     public record Aggregate(
             int runs, int callOk, int jsonParsed,
@@ -37,7 +48,8 @@ final class ExperimentStats {
             int stocksRequested, int stocksReturned, int stocksValid,
             int issuesTotal, int issuesWithValidSources, int invalidSourceRefs, int issuesDroppedNoSource,
             int issuesWithNumbers, int issuesAllNumbersConfirmed,
-            Map<String, Integer> formatLevels, Map<String, Integer> formatTrails, int unwrappedRuns) {}
+            Map<String, Integer> formatLevels, Map<String, Integer> formatTrails, int unwrappedRuns,
+            int issuesEvaluated, Double numberInclusionRate, int numbersTotal, int unverifiedNumbers) {}
 
     public record Price(double inputPerMTok, double outputPerMTok, String source, String checkedAt, String note) {}
 
@@ -61,6 +73,7 @@ final class ExperimentStats {
         int issuesValid = sum(parsed, RunRecord::issuesWithValidSources);
         int withNumbers = sum(parsed, RunRecord::issuesWithNumbers);
         int allConfirmed = sum(parsed, RunRecord::issuesAllNumbersConfirmed);
+        int evaluated = sum(parsed, RunRecord::issuesEvaluated);
 
         return new Aggregate(runs.size(), ok.size(), parsed.size(),
                 median(times), times.isEmpty() ? null : Collections.min(times), times.isEmpty() ? null : Collections.max(times),
@@ -70,7 +83,8 @@ final class ExperimentStats {
                 stocksRequested, sum(parsed, RunRecord::stocksReturned), stocksValid,
                 issuesTotal, issuesValid, sum(parsed, RunRecord::invalidSourceRefs), sum(parsed, RunRecord::issuesDroppedNoSource),
                 withNumbers, allConfirmed,
-                countAppliedLevels(ok), countTrails(runs), (int) ok.stream().filter(RunRecord::unwrapped).count());
+                countAppliedLevels(ok), countTrails(runs), (int) ok.stream().filter(RunRecord::unwrapped).count(),
+                evaluated, rate(withNumbers, evaluated), sum(parsed, RunRecord::numbersTotal), sum(parsed, RunRecord::unverifiedNumbers));
     }
 
     /** 호출이 성공한 반복에서 실제로 적용된 형식 강제 수준별 횟수 (등장 순서 유지) */

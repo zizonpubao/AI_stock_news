@@ -93,15 +93,16 @@ class ModelExperimentToolsTest {
 
     @Test
     void parseModels_기본값과_공백_중복() {
-        // 기본 대상: 기준선(현재 운영 모델), 자동 전환 대상, 가격대가 같은 3사 최저가 모델
+        // 기본 대상 4개: 기준선(현재 운영 모델), 자동 전환 대상, Claude·GPT 의 가격대가 같은 모델.
+        // gemini-2.5-flash-lite(전부 404)와 gemma-4-31b-it(대부분 실패)는 기본에서 뺐다.
         assertEquals(List.of(
                         new ModelSpec("gemini", "gemini-2.5-flash"),
                         new ModelSpec("gemini", "gemini-3.5-flash-lite"),
-                        new ModelSpec("gemini", "gemini-2.5-flash-lite"),
-                        new ModelSpec("gemini", "gemma-4-31b-it"),
                         new ModelSpec("claude", "claude-haiku-5-5"),
                         new ModelSpec("openai", "gpt-6-luna")),
                 ExperimentConfig.parseModels(""));
+        // EXPERIMENT_MODELS 로 다시 넣을 수 있다
+        assertEquals(2, ExperimentConfig.parseModels("gemini:gemini-2.5-flash-lite,gemini:gemma-4-31b-it").size());
         assertEquals(List.of(new ModelSpec("openai", "m_1.2-x")),
                 ExperimentConfig.parseModels(" OpenAI : m_1.2-x , openai:m_1.2-x "));
         assertEquals("claude:claude-haiku-5-5", ExperimentConfig.parseModels("claude:claude-haiku-5-5").get(0).key());
@@ -157,7 +158,7 @@ class ModelExperimentToolsTest {
                                 int withNum, int allNum) {
         return new RunRecord(run, true, null, ms, in, out, reasoning, null, true, req, valid, valid, total, validSrc, total - validSrc,
                 total - validSrc, null, withNum, allNum, withNum - allNum, List.of(),
-                "SCHEMA", List.of("SCHEMA:OK"), false);
+                "SCHEMA", List.of("SCHEMA:OK"), false, "BASE", validSrc, withNum * 2, List.of());
     }
 
     @Test
@@ -166,7 +167,7 @@ class ModelExperimentToolsTest {
                 ok(1, 1000, 100, 50, null, 10, 10, 20, 18, 5, 4),
                 ok(2, 3000, 200, 150, null, 10, 8, 10, 10, 5, 5),
                 ok(3, 2000, 300, 100, null, 10, 9, 10, 5, 0, 0),
-                new RunRecord(4, false, "HTTP_503", 500, null, null, null, null, false, 10, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of(), "SCHEMA", List.of("SCHEMA:HTTP_503"), false));
+                new RunRecord(4, false, "HTTP_503", 500, null, null, null, null, false, 10, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of(), "SCHEMA", List.of("SCHEMA:HTTP_503"), false, "BASE", 0, 0, List.of()));
 
         ExperimentStats.Aggregate a = ExperimentStats.aggregate(runs);
         assertEquals(4, a.runs());
@@ -192,7 +193,7 @@ class ModelExperimentToolsTest {
     @Test
     void aggregate_성공이_없으면_null() {
         ExperimentStats.Aggregate a = ExperimentStats.aggregate(List.of(
-                new RunRecord(1, false, "HTTP_401", 10, null, null, null, null, false, 10, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of(), "SCHEMA", List.of("SCHEMA:HTTP_503"), false)));
+                new RunRecord(1, false, "HTTP_401", 10, null, null, null, null, false, 10, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, List.of(), "SCHEMA", List.of("SCHEMA:HTTP_503"), false, "BASE", 0, 0, List.of())));
         assertEquals(1, a.runs());
         assertEquals(0, a.callOk());
         assertNull(a.medianMs());
@@ -232,6 +233,9 @@ class ModelExperimentToolsTest {
             assertEquals(0.10, prices.get("claude:claude-haiku-5-5").inputPerMTok());
             assertEquals(0.50, prices.get("claude:claude-haiku-5-5").outputPerMTok());
             assertEquals(0.10, prices.get("openai:gpt-6-luna").inputPerMTok());
+            assertEquals(2.50, prices.get("gemini:gemini-3.5-flash-lite").outputPerMTok());
+            assertEquals(2.50, prices.get("gemini:gemini-2.5-flash").outputPerMTok());
+            // 기본에서 뺀 모델의 단가도 EXPERIMENT_MODELS 로 넣을 때를 위해 남아 있다
             assertEquals(0.40, prices.get("gemini:gemini-2.5-flash-lite").outputPerMTok());
         }
     }
@@ -584,15 +588,273 @@ class ModelExperimentToolsTest {
     @Test
     void 집계는_형식_강제_수준과_코드펜스_제거_횟수를_센다() {
         RunRecord a = new RunRecord(1, true, null, 10, 1, 1, null, null, true, 1, 1, 1, 1, 1, 0, 0, null, 0, 0, 0, List.of(),
-                "JSON_MODE", List.of("SCHEMA_STRICT:HTTP_400", "JSON_MODE:OK"), true);
+                "JSON_MODE", List.of("SCHEMA_STRICT:HTTP_400", "JSON_MODE:OK"), true, "BASE", 0, 0, List.of());
         RunRecord b = new RunRecord(2, true, null, 10, 1, 1, null, null, true, 1, 1, 1, 1, 1, 0, 0, null, 0, 0, 0, List.of(),
-                "JSON_MODE", List.of("SCHEMA_STRICT:HTTP_400", "JSON_MODE:OK"), false);
+                "JSON_MODE", List.of("SCHEMA_STRICT:HTTP_400", "JSON_MODE:OK"), false, "BASE", 0, 0, List.of());
         RunRecord c = new RunRecord(3, true, null, 10, 1, 1, null, null, true, 1, 1, 1, 1, 1, 0, 0, null, 0, 0, 0, List.of(),
-                "SCHEMA_STRICT", List.of("SCHEMA_STRICT:OK"), false);
+                "SCHEMA_STRICT", List.of("SCHEMA_STRICT:OK"), false, "BASE", 0, 0, List.of());
         ExperimentStats.Aggregate agg = ExperimentStats.aggregate(List.of(a, b, c));
         assertEquals(Map.of("JSON_MODE", 2, "SCHEMA_STRICT", 1), agg.formatLevels());
         assertEquals(1, agg.unwrappedRuns());
         assertEquals(2, agg.formatTrails().get("SCHEMA_STRICT:HTTP_400 > JSON_MODE:OK"));
         assertEquals(1, agg.formatTrails().get("SCHEMA_STRICT:OK"));
+    }
+
+    // ===== 프롬프트 변형 =====
+
+    @Test
+    void 변형_해석_기본_단일_대소문자_중복_잘못된_값() {
+        assertEquals(List.of(PromptVariant.BASE, PromptVariant.NUMBERS), PromptVariant.parse(null));
+        assertEquals(List.of(PromptVariant.BASE, PromptVariant.NUMBERS), PromptVariant.parse("  "));
+        assertEquals(List.of(PromptVariant.BASE), PromptVariant.parse("BASE"));
+        assertEquals(List.of(PromptVariant.NUMBERS, PromptVariant.BASE), PromptVariant.parse(" numbers , Base , NUMBERS "));
+        assertThrows(IllegalArgumentException.class, () -> PromptVariant.parse("BASE,FOO"));
+        assertThrows(IllegalArgumentException.class, () -> PromptVariant.parse(",,"));
+    }
+
+    @Test
+    void 변형_문구는_운영_프롬프트_뒤에_원문_그대로_붙고_BASE_는_그대로() {
+        String prod = "운영 프롬프트\n";
+        assertEquals(prod, PromptVariant.BASE.apply(prod));
+        String expected = prod + "\n[추가 지침]\n주요 이슈를 쓸 때, 근거로 인용하는 기사에 수치(금액, 비율, 수량, 순위, 날짜 등)가 있으면 그 수치를 문장에 그대로 포함하세요. "
+                + "기사에 없는 수치는 절대 쓰지 마세요. 수치가 없는 기사라면 수치 없이 쓰세요.";
+        assertEquals(expected, PromptVariant.NUMBERS.apply(prod));
+        // 스키마 요약은 변형 문구 뒤에 붙는다: [운영] + [추가 지침] + [스키마 요약]
+        String note = "\n[스키마 요약]";
+        String full = PromptVariant.NUMBERS.apply(prod) + note;
+        assertTrue(full.indexOf("[추가 지침]") < full.indexOf("[스키마 요약]"));
+        assertTrue(full.startsWith(prod));
+    }
+
+    @Test
+    void 변형_호출_순서는_반복마다_번갈아() {
+        List<PromptVariant> two = List.of(PromptVariant.BASE, PromptVariant.NUMBERS);
+        assertEquals(List.of(PromptVariant.BASE, PromptVariant.NUMBERS), PromptVariant.order(two, 1));
+        assertEquals(List.of(PromptVariant.NUMBERS, PromptVariant.BASE), PromptVariant.order(two, 2));
+        assertEquals(List.of(PromptVariant.BASE, PromptVariant.NUMBERS), PromptVariant.order(two, 3));
+        assertEquals(List.of(PromptVariant.NUMBERS, PromptVariant.BASE), PromptVariant.order(two, 4));
+        // 변형이 하나면 그대로
+        assertEquals(List.of(PromptVariant.NUMBERS), PromptVariant.order(List.of(PromptVariant.NUMBERS), 2));
+        // 원본 목록은 바뀌지 않는다
+        assertEquals(two, List.of(PromptVariant.BASE, PromptVariant.NUMBERS));
+    }
+
+    // ===== 숫자 단위 지표 =====
+
+    @Test
+    void 숫자_단위_집계_이슈_총수와_숫자_총수와_미확인_숫자() {
+        List<String> articles = List.of("영업이익 9.1조, 12% 증가", "다른 기사 5건");
+        var a = new GeminiAnalysisService.Issue("영업이익 9.1조, 12% 증가, 목표 15%", List.of(1)); // 숫자 3, 미확인 1
+        var b = new GeminiAnalysisService.Issue("기사 5건, 7%", List.of(2));                    // 숫자 2, 미확인 1
+        var c = new GeminiAnalysisService.Issue("노조 출범", List.of(1));                        // 숫자 없음
+        NumericGrounding.Result r = NumericGrounding.evaluate(List.of(new NumericGrounding.StockInput("A", articles, List.of(a, b, c))));
+        assertEquals(3, r.issuesEvaluated());
+        assertEquals(2, r.issuesWithNumbers());
+        assertEquals(5, r.numbersTotal());
+        assertEquals(2, r.unverifiedNumbers());
+        assertEquals(0, r.issuesAllConfirmed());
+        assertEquals(List.of("15%"), NumericGrounding.unverifiedOf(articles, a));
+        assertEquals(List.of("7%"), NumericGrounding.unverifiedOf(articles, b));
+        assertTrue(NumericGrounding.unverifiedOf(articles, c).isEmpty());
+    }
+
+    @Test
+    void 모델_변형_집계의_숫자_포함_비율과_숫자_합계() {
+        // ok(): issuesEvaluated = 유효 근거 이슈 수, numbersTotal = 숫자 포함 이슈 x 2
+        ExperimentStats.Aggregate a = ExperimentStats.aggregate(List.of(
+                ok(1, 1000, 100, 50, null, 10, 10, 20, 18, 5, 4),
+                ok(2, 3000, 200, 150, null, 10, 8, 10, 10, 5, 5)));
+        assertEquals(28, a.issuesEvaluated());
+        assertEquals(10, a.issuesWithNumbers());
+        assertEquals(0.3571, a.numberInclusionRate()); // 10/28
+        assertEquals(20, a.numbersTotal());
+        assertEquals(1, a.unverifiedNumbers());
+        assertNull(ExperimentStats.aggregate(List.of()).numberInclusionRate());
+    }
+
+    // ===== 리포트 생성 (가짜 응답: 모델 2개 x 변형 2개 + 키 없는 모델 1개) =====
+
+    private static final List<ExperimentOutputs.StockInfo> STOCKS = List.of(
+            new ExperimentOutputs.StockInfo("삼성전자", List.of("삼성전자 영업이익 9.1조", "삼성전자 노조 출범")),
+            new ExperimentOutputs.StockInfo("SK하이닉스", List.of("HBM 점유율 확대")));
+
+    private static RunRecord fakeRun(int run, String variant, boolean parsed, List<ExperimentStats.StockOut> outputs,
+                                     int evaluated, int withNum, int allNum, int numbersTotal, int unverified) {
+        if (!parsed) {
+            return new RunRecord(run, false, "HTTP_503", 100, null, null, null, null, false, 2, 0, 0, 0, 0, 0, 0, null, 0, 0, 0,
+                    List.of(), "SCHEMA", List.of("SCHEMA:HTTP_503"), false, variant, 0, 0, List.of());
+        }
+        return new RunRecord(run, true, null, 1000 + run, 500, 200, null, 0.001, true, 2, 2, 2, evaluated, evaluated, 0, 0, 40.0,
+                withNum, allNum, unverified, List.of(new NumericGrounding.Unverified("삼성전자", "예시 | 문장", "10%")),
+                "SCHEMA", List.of("SCHEMA:OK"), false, variant, evaluated, numbersTotal, outputs);
+    }
+
+    private static ExperimentStats.StockOut stockOut(int idx, ExperimentStats.IssueOut... issues) {
+        return new ExperimentStats.StockOut(idx, List.of(issues));
+    }
+
+    private static ModelExperimentRunner.VariantRuns vr(PromptVariant v, RunRecord... runs) {
+        List<RunRecord> list = List.of(runs);
+        return new ModelExperimentRunner.VariantRuns(v, list, ExperimentStats.aggregate(list));
+    }
+
+    private static List<ModelExperimentRunner.ModelOutcome> fakeOutcomes() {
+        var o1 = new ModelExperimentRunner.ModelOutcome(new ModelSpec("gemini", "gemini-2.5-flash"), false, List.of("설정 하나"), null, List.of(
+                // BASE: 첫 반복은 실패, 두 번째가 첫 성공
+                vr(PromptVariant.BASE,
+                        fakeRun(1, "BASE", false, List.of(), 0, 0, 0, 0, 0),
+                        fakeRun(2, "BASE", true, List.of(
+                                stockOut(0, new ExperimentStats.IssueOut("영업이익 9.1조 발표", List.of(1), List.of()),
+                                        new ExperimentStats.IssueOut("노조 출범", List.of(2), List.of()))), 2, 1, 1, 1, 0),
+                        fakeRun(3, "BASE", true, List.of(stockOut(0, new ExperimentStats.IssueOut("세 번째 반복 문장", List.of(1), List.of()))), 1, 0, 0, 0, 0)),
+                vr(PromptVariant.NUMBERS,
+                        fakeRun(1, "NUMBERS", true, List.of(
+                                stockOut(0, new ExperimentStats.IssueOut("영업이익 9.1조, 증가율 10%", List.of(1), List.of("10%"))),
+                                stockOut(1, new ExperimentStats.IssueOut("HBM 점유율 확대", List.of(1), List.of()))), 2, 1, 0, 2, 1))));
+        var o2 = new ModelExperimentRunner.ModelOutcome(new ModelSpec("claude", "claude-haiku-5-5"), false, List.of(), null, List.of(
+                vr(PromptVariant.BASE, fakeRun(1, "BASE", true, List.of(stockOut(1, new ExperimentStats.IssueOut("HBM 확대", List.of(1), List.of()))), 1, 0, 0, 0, 0)),
+                vr(PromptVariant.NUMBERS, fakeRun(1, "NUMBERS", true, List.of(), 0, 0, 0, 0, 0))));
+        var skipped = new ModelExperimentRunner.ModelOutcome(new ModelSpec("openai", "gpt-6-luna"), true, List.of(), null, List.of());
+        return List.of(o1, o2, skipped);
+    }
+
+    private static final OffsetDateTimeHolder T = new OffsetDateTimeHolder();
+
+    private static final class OffsetDateTimeHolder {
+        final java.time.OffsetDateTime now = java.time.OffsetDateTime.parse("2026-11-18T10:00:00+09:00");
+    }
+
+    private static final java.util.regex.Pattern UNESCAPED_PIPE = java.util.regex.Pattern.compile("(?<!\\\\)\\|");
+
+    /** 마크다운에서 연속된 '|' 행 묶음(표)마다 모든 행의 열 구분자 개수가 같은지 확인하고 표 개수를 돌려준다 */
+    private static int assertTablesAligned(String md) {
+        int tables = 0;
+        int expected = -1;
+        for (String line : md.split("\n")) {
+            if (line.startsWith("|")) {
+                int n = (int) UNESCAPED_PIPE.matcher(line).results().count();
+                if (expected < 0) { expected = n; tables++; }
+                assertEquals(expected, n, "열 개수 불일치: " + line);
+            } else {
+                expected = -1;
+            }
+        }
+        return tables;
+    }
+
+    @Test
+    void summary_표의_열_개수가_머리글_구분선_값에서_모두_같다() {
+        String md = ExperimentReport.render(T.now, "http://x", 2, 3, Map.of(PromptVariant.BASE, 1000, PromptVariant.NUMBERS, 1200),
+                3, List.of(PromptVariant.BASE, PromptVariant.NUMBERS), fakeOutcomes(), "\n[스키마]");
+        assertEquals(3, assertTablesAligned(md)); // 호출 표, 형식·근거 표, 변형 간 비교 표
+        // 모델 x 변형이 한 행씩: 모델 3개 x 변형 2개 = 값 행 6개 (머리글·구분선 제외) 가 앞의 두 표에 각각
+        long gemini = md.lines().filter(l -> l.startsWith("| gemini:gemini-2.5-flash |")).count();
+        assertEquals(2 * 2 + 1, gemini); // 두 표 x 2변형 + 비교 표 1행
+        assertTrue(md.contains("| openai:gpt-6-luna | BASE | SKIPPED_NO_KEY |"));
+        assertTrue(md.contains("| openai:gpt-6-luna | NUMBERS | SKIPPED_NO_KEY |"));
+        // 변형 문구 원문, 호출 순서 설명, 비교 절
+        assertTrue(md.contains("[추가 지침]"));
+        assertTrue(md.contains("(i-1)칸 돌린"));
+        assertTrue(md.contains("## 변형 간 비교 (BASE → NUMBERS)"));
+        assertTrue(md.contains("BASE 1000자, NUMBERS 1200자"));
+        // 예시의 파이프는 이스케이프되어 문장 안에 있다
+        assertTrue(md.contains("예시 \\| 문장"));
+    }
+
+    @Test
+    void summary_비교표는_숫자만_BASE_화살표_NUMBERS() {
+        String md = ExperimentReport.render(T.now, "http://x", 2, 3, Map.of(PromptVariant.BASE, 1000, PromptVariant.NUMBERS, 1200),
+                3, List.of(PromptVariant.BASE, PromptVariant.NUMBERS), fakeOutcomes(), "\n[스키마]");
+        // gemini BASE: 평가 2+1=3, 숫자 포함 1 → 33.3% / NUMBERS: 평가 2, 숫자 포함 1 → 50.0%, 확인되지 않은 숫자 0/1 → 1/2
+        String row = md.lines().filter(l -> l.startsWith("| gemini:gemini-2.5-flash | 33.3%")).findFirst().orElseThrow();
+        assertTrue(row.contains("33.3% → 50.0%"), row);
+        assertTrue(row.contains("0/1 → 1/2"), row);
+        assertFalse(md.contains("개선"));
+    }
+
+    @Test
+    void summary_변형이_하나여도_깨지지_않고_표가_맞는다() {
+        List<ModelExperimentRunner.ModelOutcome> base = new ArrayList<>();
+        for (var o : fakeOutcomes()) {
+            base.add(new ModelExperimentRunner.ModelOutcome(o.spec(), o.skippedNoKey(), o.requestSettings(), o.price(),
+                    o.variants().stream().filter(v -> v.variant() == PromptVariant.BASE).toList()));
+        }
+        String md = ExperimentReport.render(T.now, "http://x", 2, 3, Map.of(PromptVariant.BASE, 1000), 3,
+                List.of(PromptVariant.BASE), base, "\n[스키마]");
+        assertEquals(2, assertTablesAligned(md)); // 비교 표는 없다
+        assertTrue(md.contains("변형이 BASE 뿐이라 비교하지 않았다"));
+        assertFalse(md.contains("| gemini:gemini-2.5-flash | NUMBERS |"));
+    }
+
+    @Test
+    void 표_생성은_열_개수가_다르면_예외() {
+        assertThrows(IllegalStateException.class, () -> ExperimentReport.table(List.of("a", "b"), List.of(List.of("1"))));
+        assertEquals("| a | b |\n|---|---|\n| 1 | x \\| y |\n", ExperimentReport.table(List.of("a", "b"), List.of(List.of("1", "x | y"))));
+    }
+
+    @Test
+    void 모든_모델_키_없음이어도_요약은_행_수만큼_나온다() {
+        var skipped = List.of(
+                new ModelExperimentRunner.ModelOutcome(new ModelSpec("gemini", "gemini-2.5-flash"), true, List.of(), null, List.of()),
+                new ModelExperimentRunner.ModelOutcome(new ModelSpec("claude", "claude-haiku-5-5"), true, List.of(), null, List.of()));
+        String md = ExperimentReport.render(T.now, "http://x", 2, 3, Map.of(PromptVariant.BASE, 10, PromptVariant.NUMBERS, 20), 3,
+                List.of(PromptVariant.BASE, PromptVariant.NUMBERS), skipped, "\n[스키마]");
+        assertEquals(3, assertTablesAligned(md));
+        assertEquals(8, md.lines().filter(l -> l.contains("| SKIPPED_NO_KEY |")).count()); // 두 표에 각각 모델 2 x 변형 2 = 4행
+    }
+
+    // ===== outputs.md / outputs.json =====
+
+    @Test
+    void outputs_md_종목_구획_기사_제목_모델_변형별_문장_미확인_숫자() {
+        String md = ExperimentOutputs.markdown(T.now, STOCKS, List.of(PromptVariant.BASE, PromptVariant.NUMBERS), fakeOutcomes());
+        // 종목 구획 2개와 맨 위 기사 제목(번호 포함)
+        assertTrue(md.contains("## 1. 삼성전자"));
+        assertTrue(md.contains("## 2. SK하이닉스"));
+        assertTrue(md.contains("1. 삼성전자 영업이익 9.1조\n2. 삼성전자 노조 출범\n"));
+        assertTrue(md.contains("1. HBM 점유율 확대\n"));
+        // 첫 성공 반복만: BASE 는 반복 2 (반복 1 은 실패), 반복 3 의 문장은 없다
+        assertTrue(md.contains("### gemini:gemini-2.5-flash / BASE (반복 2)"));
+        assertFalse(md.contains("세 번째 반복 문장"));
+        assertTrue(md.contains("- 영업이익 9.1조 발표 [1]\n"));
+        assertTrue(md.contains("- 노조 출범 [2]\n"));
+        // 확인되지 않은 숫자 표시
+        assertTrue(md.contains("- 영업이익 9.1조, 증가율 10% [1] (미확인 숫자: 10%)\n"));
+        // 구획 순서: 삼성전자 구획 안에 모델 x 변형 소제목이 모델 순서대로
+        int s1 = md.indexOf("## 1. 삼성전자");
+        int s2 = md.indexOf("## 2. SK하이닉스");
+        assertTrue(s1 < md.indexOf("### gemini:gemini-2.5-flash / BASE") && md.indexOf("### gemini:gemini-2.5-flash / BASE") < s2);
+        assertTrue(md.indexOf("### gemini:gemini-2.5-flash / NUMBERS") < md.indexOf("### claude:claude-haiku-5-5 / BASE"));
+        // 해당 종목 문장이 없으면 그렇게 적고, 키 없는 모델은 구획에 나오지 않는다
+        assertTrue(md.contains("(이 종목의 이슈 없음"));
+        assertFalse(md.contains("### openai:gpt-6-luna"));
+        assertTrue(md.contains("성공한 반복이 없어 문장이 없는 모델·변형: "));
+        assertTrue(md.contains("openai:gpt-6-luna / BASE"));
+    }
+
+    @Test
+    void outputs_json_모델_변형별_첫_성공_반복과_종목_문장() throws Exception {
+        Map<String, Object> m = ExperimentOutputs.json(T.now, STOCKS, List.of(PromptVariant.BASE, PromptVariant.NUMBERS), fakeOutcomes());
+        var tree = new ObjectMapper().valueToTree(m);
+        assertEquals(2, tree.path("stocks").size());
+        assertEquals("삼성전자 노조 출범", tree.at("/stocks/0/articleTitles/1").asText());
+        assertEquals(6, tree.path("results").size()); // 3모델 x 2변형
+        var first = tree.at("/results/0");
+        assertEquals("gemini:gemini-2.5-flash", first.path("model").asText());
+        assertEquals("BASE", first.path("variant").asText());
+        assertEquals(2, first.path("run").asInt());
+        assertEquals("영업이익 9.1조 발표", first.at("/stocks/0/issues/0/text").asText());
+        assertEquals("10%", tree.at("/results/1/stocks/0/issues/0/unverified/0").asText());
+        assertTrue(tree.at("/results/4/run").isNull()); // 키 없음
+        assertEquals(0, tree.at("/results/4/stocks").size());
+    }
+
+    @Test
+    void result_json_반복_기록에_variant_가_있고_문장_본문은_넣지_않는다() throws Exception {
+        RunRecord r = fakeRun(1, "NUMBERS", true, List.of(stockOut(0, new ExperimentStats.IssueOut("문장", List.of(1), List.of()))), 1, 0, 0, 0, 0);
+        var tree = new ObjectMapper().valueToTree(r);
+        assertEquals("NUMBERS", tree.path("variant").asText());
+        assertEquals(1, tree.path("issuesEvaluated").asInt());
+        assertTrue(tree.path("outputs").isMissingNode());
     }
 }

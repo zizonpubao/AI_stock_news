@@ -10,11 +10,15 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "비교할 모델 '제공자:모델ID' 쉼표 목록 (비우면 기본 5개 모델). 제공자: gemini(Gemma 포함), claude, openai, upstage, clova, groq, deepseek. 예: gemini:gemini-2.5-flash,gemini:gemma-4-31b-it,claude:claude-haiku-5-5,openai:gpt-6-luna,upstage:solar-mini4,clova:HCX-007"
+        description: "비교할 모델 '제공자:모델ID' 쉼표 목록 (비우면 기본 4개 모델: gemini-2.5-flash, gemini-3.5-flash-lite, claude-haiku-5-5, gpt-6-luna). 제공자: gemini(Gemma 포함), claude, openai, upstage, clova, groq, deepseek. 예: gemini:gemini-2.5-flash,gemini:gemma-4-31b-it,claude:claude-haiku-5-5,openai:gpt-6-luna,upstage:solar-mini4,clova:HCX-007"
         required: false
         type: string
       runs:
-        description: "모델당 반복 횟수 (비우면 3, 최대 5)"
+        description: "모델·변형당 반복 횟수 (비우면 3, 최대 5)"
+        required: false
+        type: string
+      variants:
+        description: "프롬프트 변형 쉼표 목록 (비우면 BASE,NUMBERS). BASE = 운영 프롬프트 그대로, NUMBERS = 운영 프롬프트 + 수치 인용 지침. 예: BASE"
         required: false
         type: string
   push:
@@ -33,7 +37,8 @@ jobs:
   experiment:
     name: Run model experiment
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 모델 4개 x 변형 2개 x 3회 = 24회 호출, 느린 모델은 한 번에 30~50초 걸린다
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -57,6 +62,7 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           EXPERIMENT_MODELS: ${{ inputs.models }}
           EXPERIMENT_RUNS: ${{ inputs.runs }}
+          EXPERIMENT_VARIANTS: ${{ inputs.variants }}
       - name: Add summary to job summary
         if: always()
         run: |
@@ -73,4 +79,6 @@ jobs:
           path: |
             backend/build/experiment/result.json
             backend/build/experiment/summary.md
+            backend/build/experiment/outputs.json
+            backend/build/experiment/outputs.md
           if-no-files-found: warn

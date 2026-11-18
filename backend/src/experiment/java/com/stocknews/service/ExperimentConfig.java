@@ -10,10 +10,12 @@ import java.util.regex.Pattern;
 /** 모델 비교 실험의 실행 설정 해석 (순수 함수). 환경변수 값은 호출 측이 읽어 넘긴다. */
 final class ExperimentConfig {
 
-    // 기준선(현재 운영 모델), 2026-12-01 자동 전환 대상, 가격대가 같은 3사 최저가 모델,
-    // 그리고 자체 서버에 설치할 수 있는 공개 모델(Gemma)
+    // 기준선(현재 운영 모델), 2026-12-01 자동 전환 대상, 가격대가 같은 3사 최저가 모델(Claude, GPT).
+    // 기본 대상에서 뺀 모델 (EXPERIMENT_MODELS 로 다시 넣을 수 있다):
+    // - gemini:gemini-2.5-flash-lite : 신규 사용자에게 제공되지 않아 9회 모두 404.
+    // - gemini:gemma-4-31b-it : 무료 등급만 있고 9회 중 2회만 성공(과부하·한도 초과·타임아웃)해 반복 실험 시간만 늘린다.
     static final String DEFAULT_MODELS = "gemini:gemini-2.5-flash,gemini:gemini-3.5-flash-lite,"
-            + "gemini:gemini-2.5-flash-lite,gemini:gemma-4-31b-it,claude:claude-haiku-5-5,openai:gpt-6-luna";
+            + "claude:claude-haiku-5-5,openai:gpt-6-luna";
     static final int DEFAULT_RUNS = 3;
     static final int MAX_RUNS = 5;
     static final int MAX_MODELS = 8;

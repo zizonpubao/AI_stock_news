@@ -34,7 +34,24 @@ final class NumericGrounding {
 
     public record Unverified(String stock, String issue, String number) {}
 
-    public record Result(int issuesWithNumbers, int issuesAllConfirmed, int unverifiedNumbers, List<Unverified> examples) {}
+    /**
+     * issuesEvaluated: 평가한 이슈 수(분모), issuesWithNumbers: 숫자가 하나 이상 있는 이슈,
+     * numbersTotal: 이슈 문장에서 뽑은 숫자 표현의 합(이슈마다 중복 제거 후 더함), unverifiedNumbers: 그중 인용 기사에서 확인되지 않은 것의 합.
+     */
+    public record Result(int issuesWithNumbers, int issuesAllConfirmed, int unverifiedNumbers, List<Unverified> examples,
+                         int issuesEvaluated, int numbersTotal) {}
+
+    /** 한 이슈의 숫자 중 인용 기사에서 확인되지 않은 것 (문장 안 등장 순서). 숫자가 없으면 빈 목록. */
+    static List<String> unverifiedOf(List<String> articleTexts, GeminiAnalysisService.Issue issue) {
+        List<String> numbers = extractNumbers(issue.text());
+        Set<String> cited = new LinkedHashSet<>();
+        for (int source : issue.sources()) {
+            if (source >= 1 && source <= articleTexts.size()) cited.addAll(extractNumbers(articleTexts.get(source - 1)));
+        }
+        List<String> missing = new ArrayList<>();
+        for (String n : numbers) if (!cited.contains(n)) missing.add(n);
+        return missing;
+    }
 
     /** 문자열에서 숫자 표현을 뽑아 정규화(쉼표·공백 제거)한다. 순서 유지, 중복 제거. */
     static List<String> extractNumbers(String text) {
@@ -56,29 +73,25 @@ final class NumericGrounding {
         int withNumbers = 0;
         int allConfirmed = 0;
         int unverified = 0;
+        int evaluated = 0;
+        int numbersTotal = 0;
         List<Unverified> examples = new ArrayList<>();
         for (StockInput in : inputs) {
             for (GeminiAnalysisService.Issue issue : in.issues()) {
+                evaluated++;
                 List<String> numbers = extractNumbers(issue.text());
                 if (numbers.isEmpty()) continue;
                 withNumbers++;
+                numbersTotal += numbers.size();
 
-                Set<String> cited = new LinkedHashSet<>();
-                for (int source : issue.sources()) {
-                    if (source >= 1 && source <= in.articleTexts().size()) {
-                        cited.addAll(extractNumbers(in.articleTexts().get(source - 1)));
-                    }
-                }
-                boolean all = true;
-                for (String n : numbers) {
-                    if (cited.contains(n)) continue;
-                    all = false;
+                List<String> missing = unverifiedOf(in.articleTexts(), issue);
+                for (String n : missing) {
                     unverified++;
                     if (examples.size() < MAX_EXAMPLES) examples.add(new Unverified(in.stockName(), issue.text(), n));
                 }
-                if (all) allConfirmed++;
+                if (missing.isEmpty()) allConfirmed++;
             }
         }
-        return new Result(withNumbers, allConfirmed, unverified, examples);
+        return new Result(withNumbers, allConfirmed, unverified, examples, evaluated, numbersTotal);
     }
 }
