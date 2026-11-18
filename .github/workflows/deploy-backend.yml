@@ -1,6 +1,7 @@
-name: Deploy backend to EC2
+name: Deploy backend
 
-# backend/ 변경이 main 에 push 되면 EC2 에 SSH 접속해 재배포.
+# main 에 backend 관련 변경이 push 되면: 검증(ci.yml 재사용) 통과 후에만 서버에 SSH 배포.
+# 서버는 클라우드에 종속되지 않는 일반 리눅스 서버(SSH + Docker)로 가정한다.
 on:
   push:
     branches: [main]
@@ -8,22 +9,60 @@ on:
       - "backend/**"
       - "docker-compose.yml"
       - ".github/workflows/deploy-backend.yml"
+      - ".github/workflows/ci.yml"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+# 배포가 겹치지 않게 직렬화 (진행 중인 배포는 취소하지 않는다)
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_DIR: ${{ secrets.SERVER_APP_DIR }}
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_SSH_PORT || 22 }}
+          envs: APP_DIR
+          command_timeout: 20m   # 1GB 서버의 Gradle 빌드는 오래 걸릴 수 있다
           script: |
-            set -e
-            cd ${{ secrets.EC2_APP_DIR }}
-            git pull origin main
-            docker compose up -d --build backend postgres
+            set -eu
+            cd "$APP_DIR"
+            PREV=$(git rev-parse HEAD)
+            echo "이전 커밋: $PREV"
+            git pull --ff-only origin main
+            echo "배포 커밋: $(git rev-parse HEAD)"
+            docker compose up -d --build backend
             docker image prune -f
             docker compose ps
+
+            # 헬스체크: 최대 약 3분(36회 x 5초) 재시도. JVM 기동에 시간이 걸린다.
+            for i in $(seq 1 36); do
+              if curl -fsS http://localhost:8080/api/health; then
+                echo
+                echo "헬스체크 통과 (${i}회차)"
+                exit 0
+              fi
+              echo "헬스체크 대기 중... (${i}/36)"
+              sleep 5
+            done
+
+            echo "헬스체크 실패 — 컨테이너 상태와 로그 마지막 100줄:"
+            docker compose ps
+            docker compose logs --tail=100 backend
+            echo "되돌리려면 서버에서: git reset --hard $PREV && docker compose up -d --build backend"
+            exit 1

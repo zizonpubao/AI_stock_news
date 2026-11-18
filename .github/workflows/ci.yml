@@ -1,0 +1,48 @@
+name: CI
+
+# 검증 전용 워크플로: 백엔드 테스트 + 프론트 빌드.
+# - Pull Request 와 모든 브랜치 push 에서 직접 실행된다.
+# - deploy-backend.yml 이 workflow_call 로 재사용해, 배포 전 검증 게이트로도 쓴다.
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-test:
+    name: Backend test (JDK 17)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: Run tests
+        working-directory: backend
+        run: |
+          chmod +x gradlew
+          ./gradlew test --console=plain
+
+  frontend-build:
+    name: Frontend build (Node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build (CI=true 로 경고도 에러 처리)
+        working-directory: frontend
+        run: npm run build
+        env:
+          CI: "true"
