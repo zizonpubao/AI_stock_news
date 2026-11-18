@@ -71,7 +71,29 @@ final class GeminiProviderClient implements ProviderClient {
             Integer total = (out == null && thought == null) ? null : (out == null ? 0 : out) + (thought == null ? 0 : thought);
             return new ProviderResult(r.text(), r.promptTokens(), total, thought, null);
         } catch (Exception e) {
+            printNotFoundDetail(modelId, e);
             return ProviderResult.failure(classify(e));
+        }
+    }
+
+    /**
+     * 404(모델 없음)일 때만 Google 오류 응답의 message 를 실행 로그에 남긴다.
+     * 모델 목록에는 있는데 호출은 404 인 경우(2차 실험의 gemini-2.5-flash-lite)의 원인을 확인하기 위한 것이다.
+     * API 키는 요청 헤더로만 보내므로 이 메시지에 들어 있지 않다. 다른 오류의 본문은 남기지 않는다.
+     */
+    private static void printNotFoundDetail(String modelId, Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof WebClientResponseException w && w.getStatusCode().value() == 404) {
+                try {
+                    String msg = new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readTree(w.getResponseBodyAsString()).path("error").path("message").asText("");
+                    if (msg.length() > 240) msg = msg.substring(0, 240);
+                    System.out.println("[gemini:" + modelId + "] 404 상세: " + msg);
+                } catch (Exception ignore) {
+                    // 본문을 해석하지 못하면 상세 없이 넘어간다
+                }
+                return;
+            }
         }
     }
 
