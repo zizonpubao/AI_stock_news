@@ -1,7 +1,9 @@
 package com.stocknews.scheduler;
 
 import com.stocknews.entity.NewsArticle;
+import com.stocknews.entity.NewsStatus;
 import com.stocknews.entity.Stock;
+import com.stocknews.repository.StockRepository;
 import com.stocknews.service.ArchiveService;
 import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.MarketPriceService;
@@ -33,6 +35,7 @@ public class StockScheduler {
     private final GeminiAnalysisService geminiAnalysisService;
     private final ArchiveService archiveService;
     private final MarketPriceService marketPriceService;
+    private final StockRepository stockRepository;
 
     // 업데이트 사이클 중복 실행 방지 플래그
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -106,6 +109,16 @@ public class StockScheduler {
         return true;
     }
 
+    /** 상태 기록 실패가 사이클 전체(AI 분석 등)를 막지 않도록 여기서 삼키고 로그만 남긴다. */
+    private void recordNewsStatus(Stock stock, NewsStatus status) {
+        try {
+            // save(merge) 대신 UPDATE 쿼리: detached Stock 의 orphanRemoval 로 방금 저장한 뉴스가 지워지는 것을 막는다
+            stockRepository.updateNewsStatus(stock.getId(), status);
+        } catch (Exception e) {
+            log.error("뉴스 상태 기록 실패 ({}): {}", stock.getName(), e.getMessage());
+        }
+    }
+
     private void runUpdateCycle() {
         lastAttemptAt = LocalDateTime.now();
         boolean collected = false;
@@ -125,14 +138,19 @@ public class StockScheduler {
             // 2단계: 각 종목 뉴스 수집 (개별 수집)
             Map<Long, List<NewsArticle>> newsMap = new HashMap<>();
             for (Stock stock : stocks) {
+                NewsStatus status;
                 try {
-                    List<NewsArticle> articles = newsService.fetchAndSaveNews(stock);
-                    newsMap.put(stock.getId(), articles);
-                    log.debug("뉴스 수집 완료: {} → {}건", stock.getName(), articles.size());
+                    NewsService.NewsFetchResult result = newsService.fetchAndSaveNews(stock);
+                    newsMap.put(stock.getId(), result.articles());
+                    // 호출이 성공했으면 기사가 0건이어도 SUCCESS (뉴스 없음), 실패해야만 FAILED
+                    status = result.success() ? NewsStatus.SUCCESS : NewsStatus.FAILED;
+                    log.debug("뉴스 수집 완료: {} → {}건 ({})", stock.getName(), result.articles().size(), status);
                 } catch (Exception e) {
                     log.error("뉴스 수집 실패 ({}): {}", stock.getName(), e.getMessage());
                     newsMap.put(stock.getId(), List.of());
+                    status = NewsStatus.FAILED;
                 }
+                recordNewsStatus(stock, status);
             }
 
             // 3단계: Gemini AI 분석 → 10개 종목 한 번에 요청 (API 1회 호출)

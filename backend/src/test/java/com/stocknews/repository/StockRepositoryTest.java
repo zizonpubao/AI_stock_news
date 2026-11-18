@@ -2,6 +2,7 @@ package com.stocknews.repository;
 
 import com.stocknews.entity.AnalysisStatus;
 import com.stocknews.entity.NewsArticle;
+import com.stocknews.entity.NewsStatus;
 import com.stocknews.entity.Stock;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,30 @@ class StockRepositoryTest {
         assertThat(updated).isEqualTo(1);
         assertThat(found.getAiAnalysis()).isEqualTo("📈 주요 이슈\n- A");
         assertThat(found.getAnalysisStatus()).isEqualTo(AnalysisStatus.SUCCESS);
+        assertThat(newsRepository.findByStockOrderByCollectedAtDesc(found)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("새 종목의 뉴스 상태 기본값은 PENDING")
+    void defaultNewsStatusIsPending() {
+        Stock stock = savedStockWithNews();
+
+        Stock found = stockRepository.findById(stock.getId()).orElseThrow();
+
+        assertThat(found.getNewsStatus()).isEqualTo(NewsStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("뉴스 상태 저장은 상태만 바꾸고 수집된 뉴스와 분석 상태는 그대로 둔다")
+    void updateNewsStatusKeepsNews() {
+        Stock stock = savedStockWithNews();
+
+        int updated = stockRepository.updateNewsStatus(stock.getId(), NewsStatus.FAILED);
+
+        Stock found = stockRepository.findById(stock.getId()).orElseThrow();
+        assertThat(updated).isEqualTo(1);
+        assertThat(found.getNewsStatus()).isEqualTo(NewsStatus.FAILED);
+        assertThat(found.getAnalysisStatus()).isEqualTo(AnalysisStatus.PENDING);
         assertThat(newsRepository.findByStockOrderByCollectedAtDesc(found)).hasSize(1);
     }
 

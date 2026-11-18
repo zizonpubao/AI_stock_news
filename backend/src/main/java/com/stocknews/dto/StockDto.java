@@ -23,6 +23,7 @@ public class StockDto {
     private String pbr;
     private String aiAnalysis;
     private String analysisStatus; // PENDING / SUCCESS / FAILED (기존 데이터는 null)
+    private String newsStatus;     // PENDING / SUCCESS / FAILED (기존 데이터는 null)
     private LocalDateTime updatedAt;
 
     public static StockDto from(Stock stock) {
@@ -43,6 +44,7 @@ public class StockDto {
         dto.pbr = stock.getPbr();
         dto.aiAnalysis = stock.getAiAnalysis();
         dto.analysisStatus = stock.getAnalysisStatus() != null ? stock.getAnalysisStatus().name() : null;
+        dto.newsStatus = stock.getNewsStatus() != null ? stock.getNewsStatus().name() : null;
         dto.updatedAt = stock.getUpdatedAt();
         return dto;
     }
@@ -65,6 +67,7 @@ public class StockDto {
         dto.pbr = a.getPbr();
         dto.aiAnalysis = a.getAiAnalysis();
         dto.analysisStatus = a.getAnalysisStatus() != null ? a.getAnalysisStatus().name() : null;
+        dto.newsStatus = a.getNewsStatus() != null ? a.getNewsStatus().name() : null;
         dto.updatedAt = a.getSnapshotDate() != null ? a.getSnapshotDate().atTime(16, 0) : null;
         return dto;
     }

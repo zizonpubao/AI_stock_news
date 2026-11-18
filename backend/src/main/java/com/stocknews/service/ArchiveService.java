@@ -79,6 +79,7 @@ public class ArchiveService {
             a.setPbr(s.getPbr());
             a.setAiAnalysis(s.getAiAnalysis());
             a.setAnalysisStatus(s.getAnalysisStatus());
+            a.setNewsStatus(s.getNewsStatus());
 
             for (NewsArticle n : newsRepository.findByStockOrderByCollectedAtDesc(s)) {
                 DailyArchiveNews an = new DailyArchiveNews();

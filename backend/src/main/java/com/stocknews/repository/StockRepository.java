@@ -1,6 +1,7 @@
 package com.stocknews.repository;
 
 import com.stocknews.entity.AnalysisStatus;
+import com.stocknews.entity.NewsStatus;
 import com.stocknews.entity.Stock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -32,4 +33,14 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     int updateAnalysis(@Param("id") Long id,
                        @Param("analysis") String analysis,
                        @Param("status") AnalysisStatus status);
+
+    /**
+     * 뉴스 수집 상태만 갱신한다. updateAnalysis 와 같은 이유로 UPDATE 쿼리를 쓴다:
+     * 수집 사이클에서 넘겨받은 Stock 은 detached 이고 newsArticles 에 orphanRemoval 이 걸려 있어,
+     * save(merge) 하면 방금 저장한 뉴스가 지워질 수 있다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Stock s SET s.newsStatus = :status WHERE s.id = :id")
+    int updateNewsStatus(@Param("id") Long id, @Param("status") NewsStatus status);
 }

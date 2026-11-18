@@ -38,6 +38,11 @@ public class Stock {
     @Column(length = 20)
     private AnalysisStatus analysisStatus = AnalysisStatus.PENDING;
 
+    // 뉴스 수집 상태. 기존 행(컬럼 추가 전)은 null 일 수 있음
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private NewsStatus newsStatus = NewsStatus.PENDING;
+
     @Column(name = "updated_at") private LocalDateTime updatedAt;
 
     @OneToMany(mappedBy = "stock", cascade = CascadeType.ALL, orphanRemoval = true)
