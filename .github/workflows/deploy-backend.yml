@@ -72,7 +72,14 @@ jobs:
           umask 077
           # Windows 에서 복사해 등록한 키는 줄 끝이 CRLF 일 수 있다. \r 이 남으면 ssh 가
           # "error in libcrypto" 로 키를 읽지 못하므로 제거한다.
-          printf '%s\n' "$SERVER_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/deploy_key"
+          # 시크릿은 두 형식을 받는다.
+          #  (1) 개인키 원문 그대로 ('-----BEGIN' 으로 시작하는 여러 줄)
+          #  (2) 개인키 파일을 base64 로 한 줄로 만든 값 — 웹 입력란에 붙여넣을 때 줄바꿈이 깨지는 문제를 피하려는 용도
+          if printf '%s' "$SERVER_SSH_KEY" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$SERVER_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/deploy_key"
+          else
+            printf '%s' "$SERVER_SSH_KEY" | tr -d ' \r\n' | base64 -d 2>/dev/null | tr -d '\r' > "$HOME/.ssh/deploy_key" || true
+          fi
           chmod 600 "$HOME/.ssh/deploy_key"
           # 키 형식이 올바른지 먼저 확인해, 틀리면 원인을 알 수 있는 메시지로 끝낸다(키 내용은 출력하지 않는다).
           if ! ssh-keygen -y -f "$HOME/.ssh/deploy_key" > /dev/null 2>&1; then
