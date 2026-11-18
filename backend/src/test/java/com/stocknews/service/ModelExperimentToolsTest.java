@@ -98,6 +98,7 @@ class ModelExperimentToolsTest {
                         new ModelSpec("gemini", "gemini-2.5-flash"),
                         new ModelSpec("gemini", "gemini-3.5-flash-lite"),
                         new ModelSpec("gemini", "gemini-2.5-flash-lite"),
+                        new ModelSpec("gemini", "gemma-4-31b-it"),
                         new ModelSpec("claude", "claude-haiku-5-5"),
                         new ModelSpec("openai", "gpt-6-luna")),
                 ExperimentConfig.parseModels(""));
