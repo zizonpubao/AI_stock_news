@@ -12,19 +12,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.io.IOException;
+import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-// 상단 import 추가
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import reactor.netty.http.client.HttpClient;
-import javax.net.ssl.SSLException;
-
 
 @Slf4j
 @Service
@@ -46,8 +41,14 @@ public class NewsService {
     private static final DateTimeFormatter NAVER_DATE_FORMAT =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
 
+    /**
+     * 뉴스 수집 결과. success=false 는 API 호출 실패 또는 응답 해석 실패,
+     * success=true 이고 articles 가 비어 있으면 호출은 성공했지만 조건에 맞는 기사가 없는 경우다.
+     */
+    public record NewsFetchResult(List<NewsArticle> articles, boolean success) {}
+
     @Transactional
-    public List<NewsArticle> fetchAndSaveNews(Stock stock) {
+    public NewsFetchResult fetchAndSaveNews(Stock stock) {
         log.info("뉴스 수집 시작: {}", stock.getName());
         newsRepository.deleteByStock(stock);
 
@@ -56,26 +57,12 @@ public class NewsService {
         try {
             String exactQuery = "\"" + stock.getName() + "\"";  // 1차: 정확히 일치 검색
 
-            HttpClient httpClient = HttpClient.create()
-                    .secure(sslSpec -> {
-                        try {
-                            sslSpec.sslContext(
-                                    SslContextBuilder.forClient()
-                                            .trustManager(InsecureTrustManagerFactory.INSTANCE)
-                                            .build()
-                            );
-                        } catch (SSLException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
-
+            // TLS 인증서 검증은 JDK 기본 신뢰 저장소로 수행한다.
+            // (이전에는 모든 인증서를 신뢰하도록 검증을 꺼 두어, 중간자 공격 시 API 시크릿이 노출될 수 있었다.)
             WebClient client = WebClient.builder()
                     .baseUrl(newsUrl)
-                    .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .defaultHeader("X-Naver-Client-Id", clientId)
                     .defaultHeader("X-Naver-Client-Secret", clientSecret)
-                    .defaultHeader("Referer", "https://web-production-fffaa.up.railway.app")
-                    .defaultHeader("Origin", "https://web-production-fffaa.up.railway.app")
                     .build();
 
             String response = client.get()
@@ -86,51 +73,68 @@ public class NewsService {
                             .build())
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(Duration.ofSeconds(10)); // 응답이 없을 때 무한 대기하지 않도록 제한
 
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode items = root.get("items");
-            ZonedDateTime cutoff = ZonedDateTime.now().minusHours(48);
-            int savedCount = 0;
-
-            if (items != null && items.isArray()) {
-                for (JsonNode item : items) {
-                    if (savedCount >= 5) break;
-
-                    // 48시간 필터
-                    String pubDateStr = item.get("pubDate").asText();
-                    if (!isWithin48Hours(pubDateStr, cutoff)) {
-                        log.debug("48시간 초과 제외: {}", pubDateStr);
-                        continue;
-                    }
-
-                    // 2차: 제목에 종목명 포함 여부 확인
-                    String title = cleanHtml(item.get("title").asText());
-                    if (!title.contains(stock.getName())) {
-                        log.debug("종목명 미포함 제외: {}", title);
-                        continue;
-                    }
-
-                    NewsArticle article = new NewsArticle();
-                    article.setStock(stock);
-                    article.setTitle(title);
-                    article.setDescription(cleanHtml(item.get("description").asText()));
-                    article.setLink(item.get("link").asText());
-                    article.setPubDate(pubDateStr);
-
-                    newsRepository.save(article);
-                    articles.add(article);
-                    savedCount++;
-                }
+            // 응답을 해석하지 못하면 예외 → 아래 catch 에서 실패로 처리
+            for (NewsArticle article : parseNews(response, stock.getName(), ZonedDateTime.now())) {
+                article.setStock(stock);
+                newsRepository.save(article);
+                articles.add(article);
             }
 
             log.info("뉴스 {}건 저장: {}", articles.size(), stock.getName());
+            return new NewsFetchResult(articles, true);
 
         } catch (Exception e) {
+            // 실패를 "뉴스 없음"으로 위장하지 않는다. 호출 측이 success=false 를 보고 상태를 FAILED 로 기록한다.
             log.error("뉴스 수집 실패 ({}): {}", stock.getName(), e.getMessage());
+            return new NewsFetchResult(List.of(), false);
+        }
+    }
+
+    /**
+     * 네이버 뉴스 검색 응답(JSON)을 기사 목록으로 변환한다. 네트워크·DB 를 쓰지 않는 순수 로직.
+     * 48시간 이내, 제목에 종목명 포함, 최대 5건, HTML 태그 제거. stock 은 설정하지 않는다.
+     *
+     * @throws IOException 응답이 비었거나 JSON 이 아니거나 items 배열이 없을 때 (= 해석 실패)
+     */
+    List<NewsArticle> parseNews(String response, String stockName, ZonedDateTime now) throws IOException {
+        if (response == null || response.isBlank()) {
+            throw new IOException("뉴스 API 응답이 비어 있음");
+        }
+        JsonNode root = objectMapper.readTree(response);
+        JsonNode items = root.get("items");
+        if (items == null || !items.isArray()) {
+            throw new IOException("뉴스 API 응답에 items 배열이 없음");
         }
 
-        return articles;  // 조건 불만족 시 빈 리스트 반환
+        ZonedDateTime cutoff = now.minusHours(48);
+        List<NewsArticle> result = new ArrayList<>();
+        for (JsonNode item : items) {
+            if (result.size() >= 5) break;
+
+            // 48시간 필터
+            String pubDateStr = item.path("pubDate").asText("");
+            if (!isWithin48Hours(pubDateStr, cutoff)) {
+                log.debug("48시간 초과 제외: {}", pubDateStr);
+                continue;
+            }
+
+            // 2차: 제목에 종목명 포함 여부 확인
+            String title = cleanHtml(item.path("title").asText(""));
+            if (!title.contains(stockName)) {
+                log.debug("종목명 미포함 제외: {}", title);
+                continue;
+            }
+
+            NewsArticle article = new NewsArticle();
+            article.setTitle(title);
+            article.setDescription(cleanHtml(item.path("description").asText("")));
+            article.setLink(item.path("link").asText(""));
+            article.setPubDate(pubDateStr);
+            result.add(article);
+        }
+        return result;
     }
 
     private boolean isWithin48Hours(String pubDateStr, ZonedDateTime cutoff) {

@@ -95,6 +95,12 @@ export default function StockCard({ stock, rank, selected, onClick }) {
             <span className="text-[10px] text-[var(--accent)] font-mono opacity-70">AI 분석 완료</span>
           </div>
         )}
+        {!stock.aiAnalysis && stock.analysisStatus === 'FAILED' && (
+          <div className="mt-2 flex items-center gap-1">
+            <span className="w-1 h-1 rounded-full bg-[var(--yellow)]" />
+            <span className="text-[10px] text-[var(--yellow)] font-mono opacity-80">AI 분석 실패</span>
+          </div>
+        )}
       </div>
     </div>
   );

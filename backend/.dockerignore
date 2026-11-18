@@ -7,3 +7,6 @@ build/
 .vscode/
 # 로컬 시크릿은 이미지에 넣지 않음
 src/main/resources/application-local.yml
+# 런타임 빌드(Dockerfile.runtime)는 Dockerfile.runtime.dockerignore 를 따로 쓴다.
+# 미리 빌드한 JAR 은 소스 빌드(멀티 스테이지) 컨텍스트에는 필요 없다.
+app.jar*

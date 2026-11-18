@@ -42,6 +42,18 @@ public class ArchiveService {
     @Transactional
     public int archiveToday() {
         LocalDate today = LocalDate.now(KST);
+
+        // 오늘 수집된 데이터가 없으면 아카이브하지 않는다.
+        // (수집이 계속 실패해 며칠 전 데이터가 남아 있을 때, 그것을 오늘 날짜 스냅샷으로 저장하면 안 된다.)
+        List<Stock> stocks = stockRepository.findAllByOrderByRankingAsc();
+        boolean collectedToday = stocks.stream()
+                .map(Stock::getUpdatedAt)
+                .anyMatch(t -> t != null && t.toLocalDate().equals(today));
+        if (!collectedToday) {
+            log.warn("[아카이브] {} 건너뜀 - 오늘 수집된 종목 데이터 없음", today);
+            return 0;
+        }
+
         // 멱등: 기존 오늘 아카이브 제거 (엔티티 삭제 → 뉴스도 cascade 삭제)
         List<DailyArchiveStock> existing = archiveStockRepository.findBySnapshotDateOrderByRankingAsc(today);
         if (!existing.isEmpty()) {
@@ -49,7 +61,6 @@ public class ArchiveService {
             archiveStockRepository.flush();
         }
 
-        List<Stock> stocks = stockRepository.findAllByOrderByRankingAsc();
         int saved = 0;
         for (Stock s : stocks) {
             DailyArchiveStock a = new DailyArchiveStock();
@@ -67,6 +78,8 @@ public class ArchiveService {
             a.setEstimatedPer(s.getEstimatedPer());
             a.setPbr(s.getPbr());
             a.setAiAnalysis(s.getAiAnalysis());
+            a.setAnalysisStatus(s.getAnalysisStatus());
+            a.setNewsStatus(s.getNewsStatus());
 
             for (NewsArticle n : newsRepository.findByStockOrderByCollectedAtDesc(s)) {
                 DailyArchiveNews an = new DailyArchiveNews();

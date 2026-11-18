@@ -1,0 +1,4 @@
+# Dockerfile.runtime 전용 ignore (BuildKit 이 Dockerfile 이름 + ".dockerignore" 를 우선 사용한다).
+# 런타임 이미지에는 미리 빌드한 app.jar 만 필요하다. 소스·빌드 산출물·캐시는 컨텍스트로 올리지 않는다.
+*
+!app.jar

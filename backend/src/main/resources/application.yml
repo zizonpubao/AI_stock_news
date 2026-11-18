@@ -11,6 +11,10 @@ spring:
 server:
   port: 8080
 
+# 관리용 API(수동 갱신·수동 아카이브) 보호 토큰. 비워 두면 관리용 API 는 전부 차단된다.
+admin:
+  token: ${ADMIN_TOKEN:}
+
 scheduler:
   stock-update:
     cron: "0 0 8-20 * * MON-FRI"   # 평일 8~20시 매시 정각 (넥스트레이드 프리장 08시 ~ 애프터마켓 20시)

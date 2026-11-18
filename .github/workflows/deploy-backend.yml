@@ -1,29 +1,175 @@
-name: Deploy backend to EC2
+name: Deploy backend
 
-# backend/ 변경이 main 에 push 되면 EC2 에 SSH 접속해 재배포.
+# main 에 backend 관련 변경이 push 되면(또는 수동 실행): 검증(ci.yml 재사용) 통과 후에만 배포.
+# JAR 은 러너에서 빌드해 서버로 올리고, 서버는 JRE 이미지에 JAR 만 넣어 실행한다(서버에서 Gradle 빌드 안 함).
+# 서버는 클라우드에 종속되지 않는 일반 리눅스 서버(SSH + Docker)로 가정한다.
+# 수동 실행(workflow_dispatch)은 main 이 아닌 브랜치를 골라도 그 브랜치의 커밋을 그대로 배포한다.
 on:
   push:
     branches: [main]
     paths:
       - "backend/**"
       - "docker-compose.yml"
+      - "docker-compose.server.yml"
       - ".github/workflows/deploy-backend.yml"
+      - ".github/workflows/ci.yml"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+# 배포가 겹치지 않게 직렬화 (진행 중인 배포는 취소하지 않는다)
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -e
-            cd ${{ secrets.EC2_APP_DIR }}
-            git pull origin main
-            docker compose up -d --build backend postgres
-            docker image prune -f
-            docker compose ps
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # 테스트는 verify 에서 이미 돌았으므로 생략한다.
+      - name: Build JAR
+        working-directory: backend
+        run: |
+          chmod +x gradlew
+          ./gradlew bootJar -x test --console=plain
+          shopt -s nullglob
+          jars=()
+          for f in build/libs/*.jar; do
+            case "$f" in *plain*) ;; *) jars+=("$f") ;; esac
+          done
+          if [ "${#jars[@]}" -ne 1 ]; then
+            echo "실행 JAR 이 정확히 1개여야 합니다. 찾은 것: ${jars[*]:-없음}"
+            exit 1
+          fi
+          cp "${jars[0]}" app.jar
+          ls -l app.jar
+
+      # 호스트 키는 ssh-keyscan 으로 받아 known_hosts 에 넣는다(최초 신뢰, TOFU).
+      # 개인키는 러너의 파일로만 쓰고 로그에 출력하지 않는다(set -x 사용 금지).
+      - name: Prepare SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
+        run: |
+          set -eu
+          PORT="${SERVER_SSH_PORT:-22}"
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          # Windows 에서 복사해 등록한 키는 줄 끝이 CRLF 일 수 있다. \r 이 남으면 ssh 가
+          # "error in libcrypto" 로 키를 읽지 못하므로 제거한다.
+          # 시크릿은 두 형식을 받는다.
+          #  (1) 개인키 원문 그대로 ('-----BEGIN' 으로 시작하는 여러 줄)
+          #  (2) 개인키 파일을 base64 로 한 줄로 만든 값 — 웹 입력란에 붙여넣을 때 줄바꿈이 깨지는 문제를 피하려는 용도
+          if printf '%s' "$SERVER_SSH_KEY" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$SERVER_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/deploy_key"
+          else
+            printf '%s' "$SERVER_SSH_KEY" | tr -d ' \r\n' | base64 -d 2>/dev/null | tr -d '\r' > "$HOME/.ssh/deploy_key" || true
+          fi
+          chmod 600 "$HOME/.ssh/deploy_key"
+          # 키 형식이 올바른지 먼저 확인해, 틀리면 원인을 알 수 있는 메시지로 끝낸다(키 내용은 출력하지 않는다).
+          if ! ssh-keygen -y -f "$HOME/.ssh/deploy_key" > /dev/null 2>&1; then
+            echo "SERVER_SSH_KEY 를 개인키로 읽을 수 없습니다. '-----BEGIN' 부터 '-----END' 줄까지 전체를 등록했는지 확인하세요(.pub 파일이 아닌 개인키)."
+            exit 1
+          fi
+          ssh-keyscan -p "$PORT" -H "$SERVER_HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          if [ ! -s "$HOME/.ssh/known_hosts" ]; then
+            echo "서버의 호스트 키를 가져오지 못했습니다(주소·포트·ACG 22번 허용 확인)."
+            exit 1
+          fi
+          cat > "$HOME/.ssh/config" <<'EOF'
+          Host deploy-target
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            ServerAliveInterval 30
+          EOF
+
+      - name: Upload JAR
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
+          APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+        run: |
+          set -eu
+          PORT="${SERVER_SSH_PORT:-22}"
+          scp -F "$HOME/.ssh/config" -o HostName="$SERVER_HOST" -o User="$SERVER_USER" -P "$PORT" \
+            backend/app.jar "deploy-target:$APP_DIR/backend/app.jar.new"
+
+      - name: Deploy on server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
+          APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          PORT="${SERVER_SSH_PORT:-22}"
+          cat > remote-deploy.sh <<'REMOTE'
+          set -eu
+          APP_DIR="$1"
+          SHA="$2"
+          cd "$APP_DIR"
+          PREV=$(git rev-parse HEAD)
+          echo "이전 커밋: $PREV"
+
+          # 이 워크플로가 빌드한 커밋 그대로 맞춘다(수동 실행으로 고른 브랜치도 동일)
+          git fetch --prune origin
+          git cat-file -e "${SHA}^{commit}" || { echo "서버 저장소에 커밋 $SHA 이(가) 없습니다."; exit 1; }
+          git checkout -f --detach "$SHA"
+          echo "배포 커밋: $(git rev-parse HEAD)"
+
+          # JAR 교체: 기존 것은 app.jar.prev 로 남겨 되돌릴 수 있게 한다
+          if [ -f backend/app.jar ]; then
+            mv -f backend/app.jar backend/app.jar.prev
+          fi
+          mv -f backend/app.jar.new backend/app.jar
+
+          docker compose -f docker-compose.server.yml up -d --build
+          docker image prune -f
+          # 디스크가 10GB 뿐이라 배포 때마다 쌓이는 빌드 캐시(전송된 JAR 사본 등)를 지운다.
+          # 첫 배포 직후 실측에서 디스크 사용률이 93% 까지 올라간 것이 계기다.
+          docker builder prune -af > /dev/null 2>&1 || true
+          df -h / | tail -1
+          docker compose -f docker-compose.server.yml ps
+
+          # 헬스체크: 최대 약 3분(36회 x 5초) 재시도. JVM 기동에 시간이 걸린다.
+          for i in $(seq 1 36); do
+            if curl -fsS http://localhost:8080/api/health; then
+              echo
+              echo "헬스체크 통과 (${i}회차)"
+              exit 0
+            fi
+            echo "헬스체크 대기 중... (${i}/36)"
+            sleep 5
+          done
+
+          echo "헬스체크 실패 — 컨테이너 상태와 로그 마지막 100줄:"
+          docker compose -f docker-compose.server.yml ps
+          docker compose -f docker-compose.server.yml logs --tail=100 backend
+          echo "되돌리려면 (a) Actions 에서 이전 커밋을 골라 이 워크플로를 다시 실행하거나,"
+          echo "(b) 서버에서: cd $APP_DIR/backend && mv -f app.jar.prev app.jar && cd .. && docker compose -f docker-compose.server.yml up -d --build"
+          exit 1
+          REMOTE
+          # 경로는 %q 로 이스케이프해 원격 셸에서 한 단어로 전달한다. 시크릿 값은 스크립트 본문에 넣지 않는다.
+          Q_DIR=$(printf '%q' "$APP_DIR")
+          ssh -F "$HOME/.ssh/config" -o HostName="$SERVER_HOST" -o User="$SERVER_USER" -p "$PORT" \
+            deploy-target "bash -s -- $Q_DIR $DEPLOY_SHA" < remote-deploy.sh
