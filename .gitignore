@@ -33,3 +33,7 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# ===== 배포용 미리 빌드한 JAR (CI 가 만들어 서버로 전송) =====
+backend/app.jar
+backend/app.jar.*

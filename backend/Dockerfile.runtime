@@ -1,0 +1,16 @@
+# 런타임 전용 이미지: JAR 은 GitHub Actions 러너에서 미리 빌드해 둔다(backend/app.jar).
+# 서버(1GB 메모리, 디스크 여유 약 1.9GB)에서 Gradle 빌드를 하지 않기 위한 용도다.
+# 소스에서 직접 빌드하는 이미지는 backend/Dockerfile (멀티 스테이지)을 쓴다.
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+# 비 root 사용자로 실행 (컨테이너 탈취 시 피해 범위 축소)
+RUN groupadd --system app && useradd --system --gid app --no-create-home --shell /usr/sbin/nologin app
+COPY --chown=app:app app.jar app.jar
+USER app
+EXPOSE 8080
+# user.timezone=Asia/Seoul: UTC 서버에서도 LocalDateTime.now() 등 앱 전체가 한국시간 기준으로 동작
+# MaxRAMPercentage=50: 힙을 컨테이너 메모리 한도(docker-compose.server.yml 의 mem_limit 512m)의 50% (약 256MB)로 제한.
+#   서버 실측 가용 메모리 405MB 를 근거로 정한 값이다. 나머지는 메타스페이스·스레드 스택 등에 남긴다.
+# UseSerialGC: 1 vCPU 소형 서버에서 GC 스레드·메모리 오버헤드 최소화
+# ExitOnOutOfMemoryError: OOM 이면 프로세스를 종료해 compose 의 restart 정책이 재기동하게 함
+ENTRYPOINT ["java", "-Duser.timezone=Asia/Seoul", "-Dspring.profiles.active=prod", "-XX:MaxRAMPercentage=50", "-XX:+UseSerialGC", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]

@@ -1,6 +1,6 @@
 # 배포·운영 가이드 — 백엔드 리눅스 서버(네이버클라우드) / 프론트 Vercel
 
-- **백엔드** → 리눅스(Ubuntu) 서버 1대 위 Docker (docker compose). 서버 사양은 가장 작은 급(1 vCPU, 메모리 1GB 안팎)으로 가정하고 설정했다. 네이버클라우드 Micro 서버는 공식 문서상 한국 리전 전용·계정당 1대·체험용(성능 보장 없음)이고 기본 스토리지는 10GB 까지 무료다. [확인 필요: Micro 의 vCPU·메모리 수치 — 공식 사양표에 수치가 없어 콘솔 생성 화면에서 확인]
+- **백엔드** → 리눅스(Ubuntu) 서버 1대 위 Docker (docker compose). 서버 사양은 가장 작은 급(1 vCPU, 메모리 1GB 안팎)으로 가정하고 설정했다. 네이버클라우드 Micro 서버는 공식 문서상 한국 리전 전용·계정당 1대·체험용(성능 보장 없음)이고 기본 스토리지는 10GB 까지 무료다. 콘솔 생성 화면에서 확인한 사양은 `mi1-g3`(vCPU 1, 메모리 1GB, KVM 3세대), 기본 스토리지 10GB 다.
 - **DB** → 외부 PostgreSQL(Neon). 서버에는 DB 가 없다.
 - **프론트엔드** → Vercel (GitHub 연동 자동배포). `/api/*` 를 백엔드로 프록시한다.
 - **배포 자동화** → GitHub Actions. 테스트·빌드 검증을 통과한 `main` 푸시만 서버에 SSH 로 배포한다.
@@ -14,7 +14,7 @@
 
 ```
 브라우저 ──HTTPS──> Vercel(프론트 + /api 프록시) ──HTTP :8080──> 리눅스 서버(Docker: backend) ──SSL──> Neon(PostgreSQL)
-GitHub Actions ──SSH :22──> 리눅스 서버 (git pull → docker compose up --build → /api/health 확인)
+GitHub Actions (테스트 → JAR 빌드) ──SSH :22──> 리눅스 서버 (JAR 수신 → 런타임 이미지 생성·기동 → /api/health 확인)
 ```
 
 | 위치 | 방화벽 계층 |
@@ -29,9 +29,9 @@ GitHub Actions ──SSH :22──> 리눅스 서버 (git pull → docker compos
 ## 1. 서버 생성 직후 첫 설정
 
 ### 1-1. 서버 생성 (콘솔)
-- OS 이미지: Ubuntu LTS. 네이버클라우드 OS 수명주기 문서 기준 Ubuntu 22.04 는 2028-04-30 까지 지원 예정(https://guide.ncloud-docs.com/docs/ncp-os-lifecycle). [확인 필요: 콘솔에서 실제 선택 가능한 Ubuntu 버전(24.04 제공 여부)과 Micro 에서 고를 수 있는 이미지]
+- OS 이미지: Ubuntu LTS. 네이버클라우드 OS 수명주기 문서 기준 Ubuntu 22.04 는 2028-04-30 까지 지원 예정(https://guide.ncloud-docs.com/docs/ncp-os-lifecycle). 이 서버는 콘솔에서 제공하는 `ubuntu-24.04-base` 이미지로 만들었다.
 - 인증키(SSH 키) 생성·다운로드. VPC 기준 최초 접속은 콘솔의 '관리자 비밀번호 확인'에 인증키(.pem)를 올려 관리자 계정·비밀번호를 확인한 뒤, 공인 IP 와 ACG 22번 허용을 설정하고 SSH 로 접속한다(https://guide.ncloud-docs.com/docs/server-access-vpc). 즉 처음에는 root 비밀번호 로그인이므로, 1-2·1-3 의 배포 사용자 생성과 SSH 키 전용 설정을 가장 먼저 한다.
-- 공인 IP 할당과 ACG 설정은 1-4 와 2장에서 다룬다. 공인 IP 는 별도로 신청해 서버에 연결하며, 서버에 연결하지 않아도 보유하는 동안 과금된다(https://guide.ncloud-docs.com/docs/server-publicip-vpc). Micro 서버 무료와는 별개 비용일 수 있다. [확인 필요: 공인 IP 단가, 서버 정지·재시작 시 IP 유지 여부] — Vercel 프록시 주소가 이 IP 이므로 **고정 IP 여부가 중요하다**(이전 EC2 에서 재부팅 때 IP 가 바뀌어 프록시를 두 번 고친 이력이 있다).
+- 공인 IP 할당과 ACG 설정은 1-4 와 2장에서 다룬다. 공인 IP 는 별도로 신청해 서버에 연결하며, 서버에 연결하지 않아도 보유하는 동안 과금된다(https://guide.ncloud-docs.com/docs/server-publicip-vpc). Micro 서버 무료와는 별개 비용일 수 있다. 콘솔 안내 기준 공인 IP 이용료는 월 4,032원이다. [확인 필요: 서버 정지·재시작 시 IP 유지 여부] — Vercel 프록시 주소가 이 IP 이므로 **고정 IP 여부가 중요하다**(이전 EC2 에서 재부팅 때 IP 가 바뀌어 프록시를 두 번 고친 이력이 있다).
 
 ### 1-2. 패키지 업데이트 (최초 접속한 관리자 계정으로)
 ```bash
@@ -82,7 +82,7 @@ sudo systemctl restart ssh               # 서비스 이름이 다르면 sshd. [
 ```
 **현재 접속을 끊지 말고** 새 터미널에서 (1) `deploy` 키 접속 성공, (2) `ssh -o PubkeyAuthentication=no deploy@<IP>` 가 거부되는지 확인한다. 실패하면 열어 둔 기존 세션에서 `/etc/ssh/sshd_config.d/00-hardening.conf` 를 지우고 되돌린다.
 
-> `AllowUsers deploy` 로 제한하면 관리자 계정은 SSH 로 못 들어온다. 콘솔 접속(VNC/시리얼) 같은 비상 경로가 있는지 확인해 둔다. [확인 필요: 네이버클라우드의 서버 콘솔 접속 기능]
+> `AllowUsers deploy` 로 제한하면 관리자 계정은 SSH 로 못 들어온다. 콘솔 접속(VNC/시리얼) 같은 비상 경로가 있는지 확인해 둔다. 네이버클라우드 콘솔의 서버 목록에는 '서버 접속 콘솔' 버튼이 있다. [확인 필요: 이 기능으로 SSH 없이 로그인되는지 — 직접 써보지 않음]
 
 ### 1-5. 서버 안 방화벽(ufw)
 ```bash
@@ -167,7 +167,7 @@ curl -s http://localhost:8080/api/health
 ```
 Docker 이미지의 베이스(`eclipse-temurin:17-jre`) 패치는 apt 로 되지 않는다. 베이스 이미지를 새로 받아 재빌드해야 반영된다:
 ```bash
-cd ~/AI_stock_news && docker compose build --pull backend && docker compose up -d backend
+cd ~/AI_stock_news && docker compose -f docker-compose.server.yml build --pull backend && docker compose -f docker-compose.server.yml up -d backend
 ```
 
 ---
@@ -188,8 +188,14 @@ docker --version && docker compose version
 ```
 > `docker` 그룹 사용자는 사실상 root 와 같은 권한이다. 배포 키가 유출되면 서버 전체가 위험하다는 뜻이므로, 이 키는 GitHub Secrets 외에 복사해 두지 않는다.
 
-### 4-2. 스왑 (1GB 메모리에서 Gradle 빌드가 죽는 것을 막기 위함)
-서버에서 `docker compose up --build` 가 Gradle 로 JAR 을 만든다. 메모리 1GB 로는 부족해 OOM 으로 빌드가 죽을 수 있어 스왑 2GB 를 둔다. Micro 서버의 기본 스토리지는 10GB 다(공식 문서). OS, 스왑 2GB, Docker 이미지(빌드용 JDK 이미지 포함), Gradle 캐시를 합치면 여유가 크지 않으므로 배포 뒤 `df -h` 로 확인하고, 부족하면 `docker builder prune -f` 로 빌드 캐시를 지우거나 스왑을 1GB 로 줄인다. [확인 필요: 실제 사용량 — 서버에서 측정]
+### 4-2. 스왑 (실행 중 메모리 여유용)
+**이 서버에서는 빌드를 하지 않는다.** 서버 설치 직후 실측값(Docker·Compose·스왑 설치 후):
+```
+Mem:   961Mi total, 555Mi used, 405Mi available
+Swap:  2.0Gi total, 0B used
+/dev/vda2  9.8G  7.4G used  1.9G avail  80%
+```
+서버에서 `docker compose up --build` 로 Gradle 빌드를 하려면 JDK 이미지, Gradle 배포판, 의존성 캐시가 필요한데 남은 디스크 1.9GB 와 가용 메모리 405MB 로는 감당하기 어렵다. 그래서 JAR 은 GitHub Actions 러너에서 빌드하고(`./gradlew bootJar`), 서버는 JRE 이미지(`backend/Dockerfile.runtime`)에 그 JAR 만 넣어 실행한다. 스왑은 이제 빌드용이 아니라, 실행 중 메모리가 잠깐 모자랄 때 프로세스가 바로 죽지 않게 하는 여유분이다(2GB 유지). 다만 스왑도 디스크 2GB 를 차지하므로 디스크 사용률(6-3)을 함께 본다.
 ```bash
 free -h; swapon --show                      # 스왑이 이미 있는지 확인
 sudo fallocate -l 2G /swapfile
@@ -200,14 +206,14 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf && sudo sysctl --system
 free -h                                     # Swap: 2.0Gi 확인
 ```
-스왑은 디스크를 메모리처럼 쓰는 것이라 느리다. 빌드가 끝난 뒤 평상시 운영에서 스왑을 계속 많이 쓰고 있다면 메모리가 부족한 것이다(6장 점검표).
+스왑은 디스크를 메모리처럼 쓰는 것이라 느리다. 평상시 운영에서 스왑을 계속 많이 쓰고 있다면 메모리가 부족한 것이다(6장 점검표).
 
-### 4-3. 저장소 clone, `.env`, 첫 기동
-먼저 5장의 Neon 연결 정보를 준비한다.
+### 4-3. 저장소 clone, `.env` 작성 (서버에서 하는 일은 여기까지)
+서버에서 직접 하는 일은 **저장소 clone, `.env` 작성, GitHub Secrets 등록(4-4)** 까지다. **첫 기동도 서버에서 하지 않고 배포 워크플로가 한다(4-5).** 먼저 5장의 Neon 연결 정보를 준비한다.
 ```bash
 cd ~
 git clone https://github.com/zizonpubao/AI_stock_news.git
-cd AI_stock_news
+cd AI_stock_news            # 앱 경로: /home/deploy/AI_stock_news
 cp .env.example .env
 chmod 600 .env
 nano .env
@@ -224,34 +230,45 @@ nano .env
 | `ADMIN_TOKEN` | 관리용 API(`POST /api/stocks/refresh`, `POST /api/archive/run`)를 호출할 때 `X-Admin-Token` 헤더로 보내는 값. 추측 어려운 긴 임의 문자열을 직접 생성(예: `openssl rand -hex 32`). 비우면 두 API 는 403 |
 | `CORS_ALLOWED_ORIGINS` | 선택. 커스텀 도메인을 쓸 때 추가 |
 
+> 서버의 저장소는 배포 때마다 워크플로가 빌드한 커밋으로 `git checkout -f --detach` 된다. 저장소는 HTTPS 로 clone 하므로 서버의 `git fetch` 는 공개 저장소 기준으로 인증 없이 동작한다. [확인 필요: 저장소가 비공개라면 서버에 읽기 전용 자격(deploy key 등)이 필요하다]
+
+기동 확인은 첫 배포가 끝난 뒤에 한다.
 ```bash
-docker compose up -d --build        # 첫 빌드는 수 분 걸릴 수 있다
-docker compose ps
-docker compose logs --tail=100 backend
+cd ~/AI_stock_news
+docker compose -f docker-compose.server.yml ps
+docker compose -f docker-compose.server.yml logs --tail=100 backend
 curl http://localhost:8080/api/health
+docker stats --no-stream
 ```
 외부(내 PC)에서 `http://<서버 공인IP>:8080/api/health` 도 확인한다. 안 열리면 ACG(2장)를 먼저 본다.
 
-> 컨테이너는 메모리 640MB 로 제한(`docker-compose.yml` 의 `mem_limit`)되고 JVM 힙은 그 60%(`-XX:MaxRAMPercentage=60`)로 잡힌다. 이 값들은 1GB 서버를 가정한 출발값이며 **실제 서버에서 측정해 조정한 값이 아니다.** `docker stats --no-stream` 으로 확인하고, OOM 으로 재시작되면(`docker inspect -f '{{.State.OOMKilled}}' stockpulse-backend`) 올린다.
+> 컨테이너는 메모리 512MB 로 제한(`docker-compose.server.yml` 의 `mem_limit`)되고 JVM 힙은 그 50%(`-XX:MaxRAMPercentage=50`, 약 256MB)로 잡힌다. 이 값은 서버 실측 가용 메모리 405MB 를 근거로 정한 값이다. 실제 컨테이너 사용량은 첫 배포 후 `docker stats --no-stream` 으로 확인하고, OOM 으로 재시작되면(`docker inspect -f '{{.State.OOMKilled}}' stockpulse-backend`) 조정한다.
 
 ### 4-4. GitHub Secrets
 GitHub → 저장소 Settings → Secrets and variables → Actions → Repository secrets
 
 | Secret | 값 |
 |--------|-----|
-| `SERVER_HOST` | 서버 공인 IP 또는 도메인 |
+| `SERVER_HOST` | 서버 공인 IP 또는 도메인. 예: `211.188.54.232` |
 | `SERVER_USER` | `deploy` |
 | `SERVER_SSH_KEY` | 1-3 에서 만든 `~/.ssh/stockpulse_deploy` **개인키 전체 내용** (`-----BEGIN` ~ `END` 줄 포함) |
 | `SERVER_APP_DIR` | 저장소를 clone 한 절대 경로. 예: `/home/deploy/AI_stock_news` |
-| `SERVER_SSH_PORT` | 선택. 22 가 아닌 포트를 쓸 때만 |
+| `SERVER_SSH_PORT` | 선택. 22 가 아닌 포트를 쓸 때만(없으면 22) |
 
 앱 비밀 값(DB·API 키)은 GitHub 가 아니라 서버의 `.env` 에만 둔다. 워크플로는 그 파일을 건드리지 않는다.
 
 ### 4-5. 배포 워크플로 동작
 - `.github/workflows/ci.yml` — 모든 브랜치 push 와 Pull Request 에서 백엔드 테스트(JDK 17), 프론트 빌드(Node 20)를 실행한다.
-- `.github/workflows/deploy-backend.yml` — `main` 푸시(백엔드·compose·워크플로 파일 변경 시) 또는 수동 실행에서만 돈다. 먼저 `ci.yml` 을 재사용해 검증하고, **통과한 경우에만** 서버에 SSH 접속해 `git pull --ff-only` → `docker compose up -d --build backend` → `http://localhost:8080/api/health` 를 최대 약 3분 재시도한다. 응답이 없으면 컨테이너 로그 마지막 100줄을 출력하고 실패로 끝난다.
-- 수동 실행: GitHub → Actions → "Deploy backend" → Run workflow.
-- 이 파이프라인은 실제 서버·실제 GitHub 에서 아직 실행해 본 적이 없다(문법만 로컬 검증). 첫 배포는 수동 실행으로 로그를 지켜본다.
+- `.github/workflows/deploy-backend.yml` — `main` 푸시(백엔드·compose·워크플로 파일 변경 시) 또는 수동 실행에서만 돈다. 순서:
+  1. `ci.yml` 을 재사용해 검증. **통과한 경우에만** 다음으로 간다.
+  2. 러너에서 `./gradlew bootJar -x test` 로 JAR 빌드(테스트는 1단계에서 이미 돌았다).
+  3. SSH 키를 러너 파일(권한 600)로 쓰고, `ssh-keyscan` 으로 받은 서버 호스트 키를 `known_hosts` 에 넣는다. 서드파티 SSH 액션 없이 러너 기본 `ssh`/`scp` 를 쓴다.
+  4. `scp` 로 JAR 을 서버의 `<앱 경로>/backend/app.jar.new` 로 올린다.
+  5. 서버에서 저장소를 **워크플로가 빌드한 커밋 그대로** 맞추고(`git fetch --prune origin` → `git checkout -f --detach <커밋>`), 기존 `app.jar` 를 `app.jar.prev` 로 남긴 뒤 `app.jar.new` 를 `app.jar` 로 교체, `docker compose -f docker-compose.server.yml up -d --build`, `docker image prune -f`.
+  6. `http://localhost:8080/api/health` 를 최대 약 3분(36회 x 5초) 재시도. 응답이 없으면 컨테이너 로그 마지막 100줄과 되돌리는 방법을 출력하고 실패로 끝난다.
+- **첫 기동도 이 워크플로가 한다.** GitHub → Actions → "Deploy backend" → Run workflow. 실행할 **브랜치를 고를 수 있고**, main 이 아닌 브랜치를 골라도 그 브랜치의 커밋이 배포된다(main 에 합치기 전 시험 배포 가능).
+- 호스트 키 확인 방식: 실행할 때마다 `ssh-keyscan` 으로 받은 키를 신뢰한다(최초 신뢰, TOFU). 러너는 매번 새 환경이라 이전 실행에서 저장한 키와 비교하지는 않는다. 즉 러너와 서버 사이 경로에서 가로채는 공격자가 있으면 막지 못한다. 더 엄격하게 하려면 서버 호스트 키 지문을 Secret 으로 고정해 비교하는 방식으로 개선할 수 있다.
+- 이 파이프라인은 실제 서버·실제 GitHub 에서 아직 실행해 본 적이 없다(YAML 과 셸 문법만 로컬 검증). 첫 배포는 수동 실행으로 로그를 지켜본다.
 
 ---
 
@@ -311,7 +328,14 @@ free -h                       # 메모리·스왑
 docker system df              # Docker 가 쓰는 용량
 uptime                        # 부하(1 vCPU 이므로 load 가 1 을 넘으면 포화)
 ```
-디스크가 찼을 때: `docker image prune -f`, `docker builder prune -f`, `sudo apt-get clean`, `sudo journalctl --vacuum-time=14d`.
+디스크 기준값: 서버 설치 직후 측정에서 이미 **80% 사용(7.4G/9.8G, 여유 1.9G)** 이었다. 여유가 작으므로 배포 때마다 `df -h /` 를 확인한다. 배포 워크플로는 배포 끝에 `docker image prune -f` 로 안 쓰는 이미지를 지운다.
+
+디스크가 찼을 때:
+```bash
+docker image prune -f                        # 안 쓰는 이미지 정리
+sudo apt-get clean                           # apt 캐시 삭제
+sudo journalctl --vacuum-size=100M           # 시스템 로그를 100MB 이하로
+```
 
 ### 6-4. 점검표
 | 주기 | 항목 | 정상 기준 |
@@ -319,7 +343,7 @@ uptime                        # 부하(1 vCPU 이므로 load 가 1 을 넘으면
 | 매일 (또는 평일 업무 시간 중 1회) | `/api/health` | `lastAttemptOk=true`, `lastAttemptAt` 최근 |
 | 매일 | 서비스 화면 | Vercel 주소에서 종목 10개·분석 표시 |
 | 주 1회 | `docker compose ps`, `RestartCount`, `OOMKilled` | 재시작 0, OOM false |
-| 주 1회 | `df -h /`, `free -h` | 디스크 80% 미만, 스왑 사용 적음 |
+| 주 1회 | `df -h /`, `docker system df`, `free -h` | 디스크 사용률이 설치 직후 실측(80%)보다 늘지 않음, 스왑 사용 적음 |
 | 주 1회 | `docker compose logs` 의 ERROR, SSH 실패 로그, fail2ban 현황 | 반복되는 오류 없음 |
 | 월 1회 | 수동 패치·재부팅(3-2), 자동 업데이트 이력 | 대기 중인 보안 업데이트 없음 |
 | 월 1회 | DB 백업 파일 생성·복원 시험(7장) | 복원 성공 |
@@ -356,7 +380,7 @@ ls -lh ~/backup
 pg_restore -h <새 호스트> -U <user> -d <새 dbname> --no-owner --no-privileges ~/backup/stockpulse_YYYYMMDD.dump
 psql -h <새 호스트> -U <user> -d <새 dbname> -c "select count(*) from daily_stock;"   # 테이블: stocks, news_articles, daily_stock(아카이브), daily_news
 ```
-그다음 서버 `.env` 의 `DATABASE_*` 를 새 DB 로 바꾸고 `docker compose up -d backend` 로 재기동한다. 복원 시험은 월 1회 점검표에 넣는다. 백업은 복원해 봐야 의미가 있다.
+그다음 서버 `.env` 의 `DATABASE_*` 를 새 DB 로 바꾸고 `docker compose -f docker-compose.server.yml up -d backend` 로 재기동한다. 복원 시험은 월 1회 점검표에 넣는다. 백업은 복원해 봐야 의미가 있다.
 
 ### 7-4. 서버를 통째로 잃었을 때 (이번 EC2 → 새 서버 이전이 실제 사례)
 이 프로젝트는 AWS EC2 를 더 쓸 수 없게 되어 새 서버로 옮겼다. 데이터가 외부 DB 에 있었기 때문에 서버는 "다시 세우면 되는 것"이었다. 순서:
@@ -364,7 +388,7 @@ psql -h <새 호스트> -U <user> -d <새 dbname> -c "select count(*) from daily
 2. 1장 첫 설정: 업데이트, `deploy` 사용자, SSH 키 전용, ufw, fail2ban
 3. 2장 ACG 설정
 4. 3장 자동 보안 업데이트
-5. 4장 Docker 설치, 스왑, clone, `.env` 작성(보관해 둔 값 사용), 첫 기동
+5. 4장 Docker 설치, 스왑, clone, `.env` 작성(보관해 둔 값 사용), GitHub Secrets 의 `SERVER_HOST` 갱신 후 Actions 에서 배포 워크플로 실행(첫 기동)
 6. GitHub Secrets 의 `SERVER_HOST` 를 새 IP 로, 새 배포 키를 만들었다면 `SERVER_SSH_KEY` 도 교체 → 수동 배포 실행
 7. **Vercel 프록시 주소를 새 IP 로 변경** (9장) — 이걸 빠뜨리면 서버는 멀쩡한데 화면은 계속 죽어 있다
 8. `/api/health` 와 화면으로 확인. 다음 평일 정시 수집이 `lastAttemptOk=true` 로 도는지 본다
@@ -376,16 +400,21 @@ DB 까지 잃은 경우는 7-3 으로 복원한 뒤 5번 단계에서 연결 정
 
 ## 8. 장애 대응
 
-### 8-1. 배포 실패 → 이전 커밋으로 되돌리기
-워크플로는 헬스체크 실패 시 로그를 출력하고 이전 커밋 해시를 알려 준다. 서버에서:
+### 8-1. 배포 실패 → 이전 버전으로 되돌리기
+워크플로는 헬스체크 실패 시 로그를 출력하고 되돌리는 방법을 알려 준다. 방법은 두 가지다.
+
+**(a) 정석: Actions 에서 이전 커밋을 골라 워크플로를 다시 실행.** GitHub → Actions → "Deploy backend" → Run workflow 에서, 정상이던 시점의 브랜치(또는 그 커밋을 가리키는 브랜치)를 골라 실행한다. 워크플로가 그 커밋을 다시 빌드해 JAR 과 서버 저장소를 그 상태로 맞춘다. 서버를 되돌린 뒤에는 GitHub 쪽에서도 원인 커밋을 `git revert` 로 되돌려 다음 배포가 같은 문제를 반복하지 않게 한다.
+
+**(b) 급할 때: 서버에서 직전 JAR 로 복구.** 직전 배포의 JAR 이 `app.jar.prev` 로 남아 있다.
 ```bash
-cd ~/AI_stock_news
-git log --oneline -5
-git reset --hard <이전 커밋 해시>
-docker compose up -d --build backend
+cd ~/AI_stock_news/backend
+ls -l app.jar app.jar.prev
+mv -f app.jar.prev app.jar
+cd ..
+docker compose -f docker-compose.server.yml up -d --build
 curl -s http://localhost:8080/api/health
 ```
-서버를 되돌린 뒤에는 GitHub 쪽에서도 원인 커밋을 `git revert` 로 되돌려 다음 배포가 같은 문제를 반복하지 않게 한다. 테스트·빌드가 실패한 경우는 배포 단계까지 가지 않으므로 서버는 이전 상태 그대로이다.
+(b) 는 JAR 만 되돌리고 서버의 저장소 체크아웃(compose 파일 등)은 그대로다. 설정 파일까지 바뀐 배포였다면 (a) 를 쓴다. `app.jar.prev` 는 직전 한 번분만 남는다(배포할 때마다 덮어쓴다). 테스트·빌드가 실패한 경우는 서버 단계까지 가지 않으므로 서버는 이전 상태 그대로이다.
 
 ### 8-2. 컨테이너가 안 뜨거나 계속 재시작될 때
 ```bash
@@ -394,9 +423,9 @@ docker compose logs --tail=200 backend
 docker inspect -f 'oom={{.State.OOMKilled}} exit={{.State.ExitCode}}' stockpulse-backend
 free -h; df -h /
 ```
-- `oom=true` → 메모리 부족. `docker-compose.yml` 의 `mem_limit` 을 올리거나 스왑·서버 사양을 확인
+- `oom=true` → 메모리 부족. `docker-compose.server.yml` 의 `mem_limit` 을 올리거나 스왑·서버 사양을 확인
 - 로그에 DB 연결 오류 → `.env` 의 `DATABASE_*`, Neon 상태, `sslmode=require` 확인
-- 빌드 중 `Killed` → 스왑이 없거나 부족(4-2)
+- 서버 이미지 빌드 중 오류 → `backend/app.jar` 가 있는지(`ls -l ~/AI_stock_news/backend/`), 디스크 여유(`df -h /`)를 확인
 
 ### 8-3. 수집 실패 (`lastAttemptOk=false`, 또는 `lastAttemptAt` 이 갱신되지 않음)
 확인 순서:
@@ -432,7 +461,7 @@ free -h; df -h /
 2. `frontend/vercel.json` 의 `destination` 의 IP 를 새 IP 로 바꾸고 커밋·푸시한다. 이 파일은 프론트 배포(Vercel)만 일으킨다.
 3. Vercel 배포가 끝나면 화면에서 데이터가 나오는지, 브라우저 개발자 도구 Network 탭에서 `/api/...` 가 200 인지 확인한다.
 
-> 현재 `vercel.json` 에는 이전 서버(AWS) 주소가 남아 있다. 새 서버 주소가 정해지면 위 순서로 바꿔야 한다.
+> `vercel.json` 의 프록시 주소는 새 서버(211.188.54.232)로 바꿔 두었다. main 에 반영되어 Vercel 이 다시 배포해야 실제로 적용된다.
 
 ---
 
@@ -448,5 +477,6 @@ curl http://localhost:8080/api/health
 
 ## 다음 개선
 - **백엔드 HTTPS 적용**: 지금 Vercel → 백엔드 구간은 평문 HTTP(`:8080`)다. 도메인을 붙이고 Caddy 등 리버스 프록시로 TLS 를 종단한 뒤 80/443 만 열고 8080 은 외부에서 닫는다(그러면 Docker 의 ufw 우회 문제도 `127.0.0.1:8080` 바인딩으로 해결된다).
-- **CI 에서 이미지 빌드**: GitHub Actions 에서 이미지를 빌드해 레지스트리에 올리고 서버는 받기만 하게 해, 1GB 서버에서의 Gradle 빌드와 스왑 의존을 없앤다.
+- **JAR 빌드를 CI 로 이전(완료)**: 서버의 Gradle 빌드를 없애고 GitHub Actions 러너에서 JAR 을 빌드해 서버로 올리도록 바꿨다(4장). 서버는 JRE 이미지에 JAR 만 넣어 실행한다.
+- **이미지를 레지스트리에 올려 서버에서 pull**: 지금은 서버가 JAR 로 이미지를 만든다(JRE 베이스 이미지 pull + 작은 빌드). 이미지 자체를 CI 에서 빌드해 레지스트리에 올리고 서버는 pull 만 하게 하면 서버의 빌드 단계가 사라지고, 이미지 태그로 되돌리기도 더 쉬워진다.
 - **수집 실패 알림**: `lastAttemptOk=false` 를 주기적으로 확인해 메일·메신저로 알리는 외부 감시(예: 정기 호출 후 실패 시 알림)를 둔다.
