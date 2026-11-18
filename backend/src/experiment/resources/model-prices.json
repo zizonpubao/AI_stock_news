@@ -1,0 +1,44 @@
+{
+  "gemini:gemini-2.5-flash": {
+    "inputPerMTok": 0.30,
+    "outputPerMTok": 2.50,
+    "source": "https://aistudio.google.com/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "현재 운영 모델. 지원 종료 예정이며 2026-12-01 부터 gemini-3.5-flash-lite 로 자동 전환(https://aistudio.google.com/docs/deprecations)."
+  },
+  "gemini:gemini-3.5-flash-lite": {
+    "inputPerMTok": 0.30,
+    "outputPerMTok": 2.50,
+    "source": "https://aistudio.google.com/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "Standard 등급 텍스트 단가."
+  },
+  "gemini:gemini-3.1-flash-lite": {
+    "inputPerMTok": 0.25,
+    "outputPerMTok": 1.50,
+    "source": "https://aistudio.google.com/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "2027-05-07 종료 예정으로 안내됨."
+  },
+  "gemini:gemini-2.5-flash-lite": {
+    "inputPerMTok": 0.10,
+    "outputPerMTok": 0.40,
+    "source": "https://aistudio.google.com/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "2.5 세대지만 계속 서비스되는 Gemini 중 최저가."
+  },
+  "claude:claude-haiku-5-5": {
+    "inputPerMTok": 0.10,
+    "outputPerMTok": 0.50,
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "프롬프트 10만 토큰 이하 기준 단가. 초과 구간은 단가가 다르므로 이 표로 계산하지 않는다."
+  },
+  "openai:gpt-6-luna": {
+    "inputPerMTok": 0.10,
+    "outputPerMTok": 0.50,
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "checkedAt": "2026-11-18",
+    "note": "최신 세대(GPT-6) 중 최저가. 이전 세대 gpt-5-nano 가 더 싸지만 세대가 달라 제외. 입력 272K 토큰 초과 구간은 단가가 다르다."
+  }
+}

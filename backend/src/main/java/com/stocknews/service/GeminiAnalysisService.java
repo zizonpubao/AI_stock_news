@@ -49,7 +49,7 @@ public class GeminiAnalysisService {
     static final int MAX_ISSUE_CHARS = 200;
     static final int MAX_LINE_CHARS = 150;
     // 프롬프트에 넣는 뉴스 요약 길이 상한
-    private static final int MAX_DESCRIPTION_CHARS = 300;
+    static final int MAX_DESCRIPTION_CHARS = 300; // 모델 비교 실험이 같은 길이로 근거를 대조하도록 package-private
 
     private static final Set<String> SENTIMENTS = Set.of("POSITIVE", "NEUTRAL", "NEGATIVE");
     private static final String DISCLAIMER = "* 본 분석은 AI 자동 생성 참고 자료이며, 투자 권유가 아닙니다.";
