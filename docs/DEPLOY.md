@@ -242,7 +242,16 @@ docker stats --no-stream
 ```
 외부(내 PC)에서 `http://<서버 공인IP>:8080/api/health` 도 확인한다. 안 열리면 ACG(2장)를 먼저 본다.
 
-> 컨테이너는 메모리 512MB 로 제한(`docker-compose.server.yml` 의 `mem_limit`)되고 JVM 힙은 그 50%(`-XX:MaxRAMPercentage=50`, 약 256MB)로 잡힌다. 이 값은 서버 실측 가용 메모리 405MB 를 근거로 정한 값이다. 실제 컨테이너 사용량은 첫 배포 후 `docker stats --no-stream` 으로 확인하고, OOM 으로 재시작되면(`docker inspect -f '{{.State.OOMKilled}}' stockpulse-backend`) 조정한다.
+> 컨테이너는 메모리 512MB 로 제한(`docker-compose.server.yml` 의 `mem_limit`)되고 JVM 힙은 그 50%(`-XX:MaxRAMPercentage=50`, 약 256MB)로 잡힌다. 이 값은 서버 실측 가용 메모리 405MB 를 근거로 정한 값이다. 첫 배포 직후(2026-11-18) 서버에서 잰 값은 아래와 같다. OOM 으로 재시작되면(`docker inspect -f '{{.State.OOMKilled}}' stockpulse-backend`) 조정한다.
+>
+> | 항목 | 첫 배포 직후 실측 |
+> |---|---|
+> | 컨테이너 메모리 | 266.6MiB / 512MiB (52%) |
+> | 컨테이너 CPU | 0.36% (대기 상태) |
+> | 서버 메모리 | used 653Mi, available 308Mi, 스왑 227Mi 사용 |
+> | 디스크 | 8.5G / 9.8G (93%), 여유 748M |
+>
+> 디스크가 설치 직후 80% 에서 93% 로 올랐다. 런타임 이미지와 JAR 사본, 여러 번 배포하며 쌓인 빌드 캐시 때문이다. 그래서 배포 워크플로가 매번 `docker builder prune -af` 로 빌드 캐시를 지우게 했다. 수동 정리는 6-3 참고.
 
 ### 4-4. GitHub Secrets
 GitHub → 저장소 Settings → Secrets and variables → Actions → Repository secrets
@@ -343,7 +352,7 @@ sudo journalctl --vacuum-size=100M           # 시스템 로그를 100MB 이하�
 | 매일 (또는 평일 업무 시간 중 1회) | `/api/health` | `lastAttemptOk=true`, `lastAttemptAt` 최근 |
 | 매일 | 서비스 화면 | Vercel 주소에서 종목 10개·분석 표시 |
 | 주 1회 | `docker compose ps`, `RestartCount`, `OOMKilled` | 재시작 0, OOM false |
-| 주 1회 | `df -h /`, `docker system df`, `free -h` | 디스크 사용률이 설치 직후 실측(80%)보다 늘지 않음, 스왑 사용 적음 |
+| 주 1회 | `df -h /`, `docker system df`, `free -h` | 디스크 사용률 90% 미만(설치 직후 80%, 첫 배포 직후 93% 였음 — 넘으면 6-3 의 정리 명령 실행), 스왑 사용 적음 |
 | 주 1회 | `docker compose logs` 의 ERROR, SSH 실패 로그, fail2ban 현황 | 반복되는 오류 없음 |
 | 월 1회 | 수동 패치·재부팅(3-2), 자동 업데이트 이력 | 대기 중인 보안 업데이트 없음 |
 | 월 1회 | DB 백업 파일 생성·복원 시험(7장) | 복원 성공 |

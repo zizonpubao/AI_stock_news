@@ -145,6 +145,10 @@ jobs:
 
           docker compose -f docker-compose.server.yml up -d --build
           docker image prune -f
+          # 디스크가 10GB 뿐이라 배포 때마다 쌓이는 빌드 캐시(전송된 JAR 사본 등)를 지운다.
+          # 첫 배포 직후 실측에서 디스크 사용률이 93% 까지 올라간 것이 계기다.
+          docker builder prune -af > /dev/null 2>&1 || true
+          df -h / | tail -1
           docker compose -f docker-compose.server.yml ps
 
           # 헬스체크: 최대 약 3분(36회 x 5초) 재시도. JVM 기동에 시간이 걸린다.
