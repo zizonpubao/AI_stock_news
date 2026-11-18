@@ -14,7 +14,7 @@
 <br/>
 
 ![Java](https://img.shields.io/badge/Java-17-007396?logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2-6DB33F?logo=springboot&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql&logoColor=white)
@@ -151,7 +151,7 @@ AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가
 | 구분 | 기술 |
 |------|------|
 | **Frontend** | React 18 (CRA), Tailwind CSS v3, Axios |
-| **Backend** | Java 17, Spring Boot 3.2, Spring Data JPA, Spring Scheduler |
+| **Backend** | Java 17, Spring Boot 3.5, Spring Data JPA, Spring Scheduler |
 | **수집 / 외부 연동** | Jsoup(HTTP 호출 · JSON 수집), Spring WebFlux WebClient |
 | **Database** | H2 (로컬) / PostgreSQL — [Neon](https://neon.tech) (운영) |
 | **AI / 외부 API** | Google Gemini 2.5 Flash, 네이버 검색 API, 네이버 금융/지수 |
@@ -262,7 +262,7 @@ erDiagram
 
 ```
 .
-├── backend/                Spring Boot 3.2 (Java 17, Gradle)
+├── backend/                Spring Boot 3.5 (Java 17, Gradle)
 │   └── src/main/java/com/stocknews/
 │       ├── controller/     REST API
 │       ├── service/        종목 수집 · 뉴스 · Gemini 분석 · 지수 · 아카이브
