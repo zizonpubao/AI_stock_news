@@ -48,14 +48,17 @@ final class ExperimentReport {
 
         sb.append("## 형식·근거\n\n");
         sb.append("| 모델 | 형식 강제 | 코드펜스 제거 | 요청 종목 합 | 응답 종목 합 | 검증 통과 종목 합 | 이슈 총수 | 유효 근거 번호가 있는 이슈 | 범위 밖 근거 번호 | 근거 없어 버려진 이슈 | 근거 유효율 | 숫자 포함 이슈 | 숫자가 모두 확인된 이슈 | 수치 근거 일치율 |\n");
-        sb.append("|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        sb.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
         for (ModelOutcome o : outcomes) {
             sb.append("| ").append(o.spec().key()).append(" | ");
             if (o.skippedNoKey()) {
-                sb.append("SKIPPED_NO_KEY | - | - | - | - | - | - | - | - | - | - |\n");
+                sb.append("SKIPPED_NO_KEY | - | - | - | - | - | - | - | - | - | - | - | - |\n");
                 continue;
             }
             Aggregate a = o.aggregate();
+            // 머리글의 2·3번째 열: 적용된 형식 강제 수준, 코드펜스를 걷어낸 횟수(k/n)
+            sb.append(levels(a.formatLevels())).append(" | ")
+                    .append(a.unwrappedRuns()).append("/").append(a.jsonParsed()).append(" | ");
             sb.append(a.stocksRequested()).append(" | ").append(a.stocksReturned()).append(" | ").append(a.stocksValid())
                     .append(" | ").append(a.issuesTotal()).append(" | ").append(a.issuesWithValidSources())
                     .append(" | ").append(a.invalidSourceRefs()).append(" | ").append(a.issuesDroppedNoSource())
@@ -65,6 +68,26 @@ final class ExperimentReport {
                     .append(" |\n");
         }
         sb.append("\n형식·근거 지표는 JSON 해석에 성공한 반복을 모두 더한 값이다.\n\n");
+
+        sb.append("## 형식 강제 시도 이력\n\n");
+        sb.append("반복마다 어떤 수준을 시도했고 어떻게 끝났는지(수준:결과, '>' 는 한 단계 내려가 다시 시도)를 횟수와 함께 적는다.\n\n");
+        for (ModelOutcome o : outcomes) {
+            if (o.skippedNoKey()) continue;
+            Map<String, Integer> trails = o.aggregate().formatTrails();
+            sb.append("- ").append(o.spec().key()).append(": ");
+            if (trails == null || trails.isEmpty()) {
+                sb.append("기록 없음\n");
+                continue;
+            }
+            boolean firstTrail = true;
+            for (Map.Entry<String, Integer> e : trails.entrySet()) {
+                if (!firstTrail) sb.append(", ");
+                sb.append(e.getKey()).append(" ").append(e.getValue()).append("회");
+                firstTrail = false;
+            }
+            sb.append("\n");
+        }
+        sb.append("\n");
 
         sb.append("## 실패한 반복의 오류 코드\n\n");
         boolean anyError = false;

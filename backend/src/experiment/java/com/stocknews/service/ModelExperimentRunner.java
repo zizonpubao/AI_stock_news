@@ -55,6 +55,54 @@ public final class ModelExperimentRunner {
     /** 입력 스냅샷: 뉴스가 있는 종목과 그 기사 (운영 analyzeAllStocks 와 같은 방식, 기사는 id 오름차순) */
     record Input(List<Stock> stocks, List<List<NewsArticle>> news, int articleCount) {}
 
+    /**
+     * 이 키로 generateContent 를 호출할 수 있는 Gemini API 모델 ID 목록.
+     * 문서에 적힌 모델 이름이 실제 호출에서 404 가 나는 경우(1차 실험의 gemini-2.5-flash-lite)를 확인하기 위한 것이다.
+     * 실패하면 빈 목록을 돌려준다. 키와 응답 본문은 어디에도 출력하지 않는다.
+     */
+    static List<String> listGeminiModels(ObjectMapper mapper, String apiKey) {
+        List<String> ids = new ArrayList<>();
+        if (apiKey == null || apiKey.isBlank()) return ids;
+        try {
+            java.net.http.HttpClient http = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(10)).build();
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(
+                            java.net.URI.create("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"))
+                    .header("x-goog-api-key", apiKey)
+                    .timeout(java.time.Duration.ofSeconds(20)).GET().build();
+            java.net.http.HttpResponse<String> res = http.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) return ids;
+            for (com.fasterxml.jackson.databind.JsonNode m : mapper.readTree(res.body()).path("models")) {
+                boolean generate = false;
+                for (com.fasterxml.jackson.databind.JsonNode method : m.path("supportedGenerationMethods")) {
+                    if ("generateContent".equals(method.asText())) generate = true;
+                }
+                String name = m.path("name").asText("");
+                if (generate && name.startsWith("models/")) ids.add(name.substring("models/".length()));
+            }
+            java.util.Collections.sort(ids);
+        } catch (Exception e) {
+            // 목록 조회 실패는 실험 결과에 영향을 주지 않는다
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return new ArrayList<>();
+        }
+        return ids;
+    }
+
+    static String geminiModelsSection(List<String> ids) {
+        StringBuilder sb = new StringBuilder("\n## 이 키로 호출할 수 있는 Gemini API 모델 ID\n\n");
+        if (ids.isEmpty()) {
+            sb.append("조회하지 못함 (키 없음 또는 목록 조회 실패).\n");
+            return sb.toString();
+        }
+        sb.append("Gemini API 의 모델 목록(generateContent 지원)에서 flash·gemma 가 이름에 들어간 것만 적는다. 전체 ")
+                .append(ids.size()).append("개.\n\n");
+        for (String id : ids) {
+            if (id.contains("flash") || id.contains("gemma")) sb.append("- ").append(id).append("\n");
+        }
+        return sb.toString();
+    }
+
     public static void main(String[] args) {
         System.exit(new ModelExperimentRunner().run());
     }
@@ -146,7 +194,8 @@ public final class ModelExperimentRunner {
                     mapper.writeValueAsString(resultJson(ranAt, base, input, prompt.length(), sha, runs, outcomes, schemaNote, clients)),
                     StandardCharsets.UTF_8);
             String summary = ExperimentReport.render(ranAt, base, input.stocks().size(), input.articleCount(),
-                    prompt.length(), runs, outcomes, schemaNote);
+                    prompt.length(), runs, outcomes, schemaNote)
+                    + geminiModelsSection(listGeminiModels(mapper, System.getenv("GEMINI_API_KEY")));
             Files.writeString(dir.resolve("summary.md"), summary, StandardCharsets.UTF_8);
             out.println();
             out.println(summary);
