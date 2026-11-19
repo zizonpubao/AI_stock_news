@@ -21,6 +21,10 @@ on:
         description: "프롬프트 변형 쉼표 목록 (비우면 BASE,NUMBERS). BASE = 운영 프롬프트 그대로, NUMBERS = 운영 프롬프트 + 수치 인용 지침. 예: BASE"
         required: false
         type: string
+      call_delay_seconds:
+        description: "호출 사이 간격(초, 비우면 0, 최대 120). 제공자의 분당 요청 한도를 피하려고 둔다. 모든 모델에 같게 적용된다."
+        required: false
+        type: string
   push:
     branches:
       - "experiment/**"
@@ -38,7 +42,8 @@ jobs:
     name: Run model experiment
     runs-on: ubuntu-latest
     # 모델 4개 x 변형 2개 x 3회 = 24회 호출, 느린 모델은 한 번에 30~50초 걸린다
-    timeout-minutes: 30
+    # 호출 간격(call_delay_seconds)을 주면 그만큼 더 걸린다
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -63,6 +68,7 @@ jobs:
           EXPERIMENT_MODELS: ${{ inputs.models }}
           EXPERIMENT_RUNS: ${{ inputs.runs }}
           EXPERIMENT_VARIANTS: ${{ inputs.variants }}
+          EXPERIMENT_CALL_DELAY_SECONDS: ${{ inputs.call_delay_seconds }}
       - name: Add summary to job summary
         if: always()
         run: |

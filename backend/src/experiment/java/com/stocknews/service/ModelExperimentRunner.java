@@ -118,8 +118,10 @@ public final class ModelExperimentRunner {
         List<ModelSpec> specs;
         List<PromptVariant> variants;
         int runs;
+        int callDelaySeconds;
         String base = envOr("EXPERIMENT_API_BASE", DEFAULT_API_BASE);
         try {
+            callDelaySeconds = ExperimentConfig.parseCallDelaySeconds(System.getenv("EXPERIMENT_CALL_DELAY_SECONDS"));
             specs = ExperimentConfig.parseModels(System.getenv("EXPERIMENT_MODELS"));
             runs = ExperimentConfig.parseRuns(System.getenv("EXPERIMENT_RUNS"));
             variants = PromptVariant.parse(System.getenv("EXPERIMENT_VARIANTS"));
@@ -177,7 +179,9 @@ public final class ModelExperimentRunner {
         OffsetDateTime ranAt = OffsetDateTime.now(KST);
         out.println("모델 비교 실험 시작: 종목 " + input.stocks().size() + "개, 기사 " + input.articleCount()
                 + "건, 프롬프트 " + promptChars + "자, 모델 " + specs.size() + "개 x 변형 " + variants.size() + "개 x " + runs + "회");
+        out.println("호출 간격: " + callDelaySeconds + "초 (모든 모델의 호출 사이에 같게 둔다. 소요 시간에는 포함되지 않는다)");
 
+        boolean firstCall = true;
         List<ModelOutcome> outcomes = new ArrayList<>();
         for (ModelSpec spec : specs) {
             ProviderClient client = clients.get(spec.provider());
@@ -193,6 +197,14 @@ public final class ModelExperimentRunner {
             for (int i = 1; i <= runs; i++) {
                 // 반복마다 변형 호출 순서를 돌려 시간대 차이가 한 변형에 몰리지 않게 한다
                 for (PromptVariant v : PromptVariant.order(variants, i)) {
+                    if (!firstCall && callDelaySeconds > 0) {
+                        try {
+                            Thread.sleep(callDelaySeconds * 1000L);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    firstCall = false;
                     RunRecord r = runOnce(client, spec, i, v, prompts.get(v), schemaNote, schema, input, newsCounts, price, mapper);
                     byVariant.get(v).add(r);
                     out.println("[" + spec.key() + " / " + v.name() + "] " + i + "/" + runs + " " + (r.callOk() ? (r.jsonParsed() ? "OK" : r.errorCode()) : r.errorCode())
