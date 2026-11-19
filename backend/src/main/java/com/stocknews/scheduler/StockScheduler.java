@@ -8,6 +8,7 @@ import com.stocknews.repository.PipelineRunRepository;
 import com.stocknews.repository.StockRepository;
 import com.stocknews.service.ArchiveService;
 import com.stocknews.service.ArticleBodyFetcher;
+import com.stocknews.service.CitationAbResult;
 import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.MarketPriceService;
 import com.stocknews.service.NewsService;
@@ -25,6 +26,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
@@ -96,7 +98,7 @@ public class StockScheduler {
             return;
         }
         try {
-            runUpdateCycle(trigger);
+            runUpdateCycle(trigger, null);
         } finally {
             running.set(false);
         }
@@ -112,7 +114,7 @@ public class StockScheduler {
         if (!running.compareAndSet(false, true)) return false;
         Thread worker = new Thread(() -> {
             try {
-                runUpdateCycle(PipelineRun.TRIGGER_MANUAL);
+                runUpdateCycle(PipelineRun.TRIGGER_MANUAL, null);
             } finally {
                 running.set(false);
             }
@@ -132,7 +134,37 @@ public class StockScheduler {
         }
     }
 
-    private void runUpdateCycle(String trigger) {
+    /**
+     * 근거 번호 지침 비교 실험: 수동 갱신과 똑같은 사이클 한 번(수집 → 뉴스+본문 → 운영 분석 저장, 실행 기록 PipelineRun 저장)을
+     * 돌린 뒤, 같은 메모리의 뉴스(본문이 붙어 있음)로 지침 유무를 비교한다. 비교 결과는 어디에도 저장하지 않는다.
+     * 사이클과 같은 running 플래그를 실험이 끝날 때까지 잡고 있으므로 정기 실행·다른 실험과 겹치지 않는다
+     * (그 동안 정시가 되면 그 정기 실행은 "이미 진행 중"으로 건너뛴다). 이미 진행 중이면 빈 Optional.
+     */
+    public Optional<CitationAbResult> runCitationAb(int runsPerVariant) {
+        if (!running.compareAndSet(false, true)) return Optional.empty();
+        try {
+            LocalDateTime startedAt = LocalDateTime.now();
+            CycleCapture capture = new CycleCapture();
+            runUpdateCycle(PipelineRun.TRIGGER_MANUAL, capture);
+            if (!capture.reachedAnalysis) {
+                log.warn("근거 번호 지침 비교: 사이클이 분석 단계에 이르지 못해 비교 실험을 하지 않음");
+                return Optional.of(CitationAbResult.notRun(startedAt, runsPerVariant, new CitationAbResult.Input(0, 0, 0),
+                        "수집 사이클이 분석 단계까지 가지 못해 비교 실험을 하지 않았습니다."));
+            }
+            return Optional.of(geminiAnalysisService.compareCitationRule(capture.stocks, capture.newsMap, runsPerVariant));
+        } finally {
+            running.set(false);
+        }
+    }
+
+    /** 사이클이 분석 단계까지 간 경우 그때의 종목과 뉴스(본문 포함)를 호출자에게 넘기는 상자. 일반 실행은 쓰지 않는다. */
+    private static final class CycleCapture {
+        boolean reachedAnalysis;
+        List<Stock> stocks;
+        Map<Long, List<NewsArticle>> newsMap;
+    }
+
+    private void runUpdateCycle(String trigger, CycleCapture capture) {
         long startNanos = System.nanoTime();
         PipelineRun run = new PipelineRun();
         run.setTrigger(trigger);
@@ -186,6 +218,11 @@ public class StockScheduler {
             // 3단계: Gemini AI 분석 → 10개 종목 한 번에 요청 (API 1회 호출)
             GeminiAnalysisService.AnalysisSummary summary = geminiAnalysisService.analyzeAllStocks(stocks, newsMap);
             if (summary != null) log.info("AI 분석 요약: {}", summary);
+            if (capture != null) {
+                capture.stocks = stocks;
+                capture.newsMap = newsMap;
+                capture.reachedAnalysis = true;
+            }
             outcome = applyAnalysis(run, summary);
             // 종목은 수집했지만 뉴스 호출이 전부 실패한 사이클은 "정상"으로 기록하지 않는다
             // (뉴스가 없으면 AI 도 요청하지 않으므로, 이 검사가 없으면 OK 로 남는다)
