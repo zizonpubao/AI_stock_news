@@ -104,6 +104,23 @@ class StockSchedulerPipelineRunTest {
     }
 
     @Test
+    @DisplayName("수치 근거의 미포착 개수와 상세 JSON 이 실행 기록에 저장된다")
+    void numbersDetailIsRecorded() {
+        when(crawler.crawlAndSaveTop10()).thenReturn(List.of(stock1, stock2));
+        stubNewsOk();
+        String detail = "[{\"stock\":\"A\",\"number\":\"7\",\"category\":\"NOT_FOUND\",\"sources\":[1],\"issue\":\"x\"}]";
+        when(gemini.analyzeAllStocks(any(), any()))
+                .thenReturn(new AnalysisSummary("claude-haiku-5-5", 2, 2, 0, 0, 1000, 500, 21500L, 14, 3, 1, detail));
+
+        scheduler.updateAllStocks();
+
+        PipelineRun run = savedRun();
+        assertThat(run.getNumbersUnverified()).isEqualTo(3);
+        assertThat(run.getNumbersNotInAnyArticle()).isEqualTo(1);
+        assertThat(run.getNumbersUnverifiedDetail()).isEqualTo(detail);
+    }
+
+    @Test
     @DisplayName("종목 수집이 실패하면 COLLECT_FAILED 로 저장되고 뉴스·AI 는 호출되지 않는다")
     void collectFailureIsRecorded() {
         when(crawler.crawlAndSaveTop10()).thenReturn(List.of());

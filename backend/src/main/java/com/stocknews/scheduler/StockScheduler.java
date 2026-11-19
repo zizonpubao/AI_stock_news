@@ -243,6 +243,8 @@ public class StockScheduler {
         run.setAnalysisElapsedMs(summary.elapsedMs());
         run.setNumbersTotal(summary.numbersTotal());
         run.setNumbersUnverified(summary.numbersUnverified());
+        run.setNumbersNotInAnyArticle(summary.numbersNotInAnyArticle());
+        run.setNumbersUnverifiedDetail(summary.numbersUnverifiedDetail());
         if (summary.requested() > 0 && summary.success() == 0) return PipelineRun.OUTCOME_AI_CALL_FAILED;
         if (summary.failed() > 0) return PipelineRun.OUTCOME_PARTIAL;
         return PipelineRun.OUTCOME_OK;
