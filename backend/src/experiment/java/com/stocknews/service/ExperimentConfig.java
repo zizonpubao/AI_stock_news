@@ -79,6 +79,20 @@ final class ExperimentConfig {
     }
 
     /** 반복 횟수. 비었으면 기본 3, 1 미만이면 1, 최대 5. 숫자가 아니면 예외. */
+    static final int MAX_CALL_DELAY_SECONDS = 120;
+
+    /** 호출 사이에 두는 간격(초). 비우면 0(간격 없음), 0~120 으로 맞춘다. 제공자의 분당 요청 한도를 피하려고 둔다. */
+    static int parseCallDelaySeconds(String raw) {
+        if (raw == null || raw.isBlank()) return 0;
+        int n;
+        try {
+            n = Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("EXPERIMENT_CALL_DELAY_SECONDS 는 정수여야 합니다.");
+        }
+        return Math.max(0, Math.min(MAX_CALL_DELAY_SECONDS, n));
+    }
+
     static int parseRuns(String raw) {
         if (raw == null || raw.isBlank()) return DEFAULT_RUNS;
         int n;

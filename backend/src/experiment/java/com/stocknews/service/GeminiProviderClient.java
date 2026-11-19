@@ -71,24 +71,28 @@ final class GeminiProviderClient implements ProviderClient {
             Integer total = (out == null && thought == null) ? null : (out == null ? 0 : out) + (thought == null ? 0 : thought);
             return new ProviderResult(r.text(), r.promptTokens(), total, thought, null);
         } catch (Exception e) {
-            printNotFoundDetail(modelId, e);
+            printErrorDetail(modelId, e);
             return ProviderResult.failure(classify(e));
         }
     }
 
     /**
-     * 404(모델 없음)일 때만 Google 오류 응답의 message 를 실행 로그에 남긴다.
-     * 모델 목록에는 있는데 호출은 404 인 경우(2차 실험의 gemini-2.5-flash-lite)의 원인을 확인하기 위한 것이다.
+     * 404(모델 없음)와 429(한도 초과)일 때만 Google 오류 응답의 message 를 실행 로그에 남긴다.
+     * 404 는 모델 목록에는 있는데 호출은 안 되는 경우(2차 실험의 gemini-2.5-flash-lite), 429 는 어떤 한도(분당·일일, 요금 등급)에
+     * 걸렸는지(4차·5차 실험의 gemini-2.5-flash)를 확인하기 위한 것이다.
      * API 키는 요청 헤더로만 보내므로 이 메시지에 들어 있지 않다. 다른 오류의 본문은 남기지 않는다.
      */
-    private static void printNotFoundDetail(String modelId, Throwable e) {
+    private static void printErrorDetail(String modelId, Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof WebClientResponseException w && w.getStatusCode().value() == 404) {
+            if (t instanceof WebClientResponseException w
+                    && (w.getStatusCode().value() == 404 || w.getStatusCode().value() == 429)) {
+                int status = w.getStatusCode().value();
                 try {
                     String msg = new com.fasterxml.jackson.databind.ObjectMapper()
                             .readTree(w.getResponseBodyAsString()).path("error").path("message").asText("");
-                    if (msg.length() > 240) msg = msg.substring(0, 240);
-                    System.out.println("[gemini:" + modelId + "] 404 상세: " + msg);
+                    int max = status == 429 ? 700 : 240;
+                    if (msg.length() > max) msg = msg.substring(0, max);
+                    System.out.println("[gemini:" + modelId + "] " + status + " 상세: " + msg.replaceAll("\\s+", " "));
                 } catch (Exception ignore) {
                     // 본문을 해석하지 못하면 상세 없이 넘어간다
                 }
