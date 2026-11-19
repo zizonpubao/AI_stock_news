@@ -35,17 +35,25 @@ public class NewsService {
     private final NewsRepository newsRepository;
     private final ObjectMapper objectMapper;
     private final ArticleBodyFetcher bodyFetcher;
+    private final StockAliases aliases;
 
     @Autowired
-    public NewsService(NewsRepository newsRepository, ObjectMapper objectMapper, ArticleBodyFetcher bodyFetcher) {
+    public NewsService(NewsRepository newsRepository, ObjectMapper objectMapper, ArticleBodyFetcher bodyFetcher,
+                       StockAliases aliases) {
         this.newsRepository = newsRepository;
         this.objectMapper = objectMapper;
         this.bodyFetcher = bodyFetcher;
+        this.aliases = aliases == null ? StockAliases.none() : aliases;
+    }
+
+    /** 별칭 검색을 쓰지 않는 구성 (기존 호출·테스트 호환) */
+    public NewsService(NewsRepository newsRepository, ObjectMapper objectMapper, ArticleBodyFetcher bodyFetcher) {
+        this(newsRepository, objectMapper, bodyFetcher, StockAliases.none());
     }
 
     /** 본문 수집을 쓰지 않는 구성 (기존 호출·테스트 호환) */
     public NewsService(NewsRepository newsRepository, ObjectMapper objectMapper) {
-        this(newsRepository, objectMapper, ArticleBodyFetcher.disabled());
+        this(newsRepository, objectMapper, ArticleBodyFetcher.disabled(), StockAliases.none());
     }
 
     @Value("${naver.api.client-id}")
@@ -74,28 +82,24 @@ public class NewsService {
         List<NewsArticle> articles = new ArrayList<>();
 
         try {
-            String exactQuery = "\"" + stock.getName() + "\"";  // 1차: 정확히 일치 검색
+            // 검색어 = 공식 종목명 + 별칭. 이름마다 API 를 한 번씩 부른다(정확히 일치 검색).
+            List<String> aliasNames = aliases.aliasesFor(stock.getCode(), stock.getName());
 
-            // TLS 인증서 검증은 JDK 기본 신뢰 저장소로 수행한다.
-            // (이전에는 모든 인증서를 신뢰하도록 검증을 꺼 두어, 중간자 공격 시 API 시크릿이 노출될 수 있었다.)
-            WebClient client = WebClient.builder()
-                    .baseUrl(newsUrl)
-                    .defaultHeader("X-Naver-Client-Id", clientId)
-                    .defaultHeader("X-Naver-Client-Secret", clientSecret)
-                    .build();
+            // 공식 종목명 호출이 실패하면 예외 → 아래 catch 에서 종목 전체 실패로 처리
+            List<String> responses = new ArrayList<>();
+            responses.add(callNewsApi("\"" + stock.getName() + "\""));
+            for (String alias : aliasNames) {
+                try {
+                    responses.add(callNewsApi("\"" + alias + "\""));
+                } catch (Exception e) {
+                    // 별칭 호출 실패는 종목 실패가 아니다. 그 별칭 결과만 빠진다.
+                    log.warn("별칭 뉴스 검색 실패 ({} / {}): {}", stock.getName(), alias, e.getMessage());
+                    responses.add(null);
+                }
+            }
 
-            String response = client.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .queryParam("query", exactQuery)
-                            .queryParam("display", 30) // 중복·48시간·종목명 필터 후에도 5건을 채우기 위해 20→30
-                            .queryParam("sort", "sim")
-                            .build())
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(10)); // 응답이 없을 때 무한 대기하지 않도록 제한
-
-            // 응답을 해석하지 못하면 예외 → 아래 catch 에서 실패로 처리
-            List<NewsArticle> parsed = parseNews(response, stock.getName(), ZonedDateTime.now());
+            // 공식 응답을 해석하지 못하면 예외 → 아래 catch 에서 실패로 처리
+            List<NewsArticle> parsed = parseNews(responses, stock.getName(), aliasNames, ZonedDateTime.now());
             attachBodies(parsed, BODY_BUDGET_MS); // 실패해도 예외를 던지지 않고 기사별 상태로만 남긴다
             for (NewsArticle article : parsed) {
                 article.setStock(stock);
@@ -104,6 +108,12 @@ public class NewsService {
             }
 
             log.info("뉴스 {}건 저장: {}", articles.size(), stock.getName());
+            if (!aliasNames.isEmpty()) {
+                long aliasOnly = articles.stream()
+                        .filter(a -> !mentionsAsOwnWord(a.getTitle(), stock.getName())).count();
+                log.info("별칭 검색 - {}: 검색어 {}개, 채택 {}건 중 별칭 표기로만 걸린 기사 {}건",
+                        stock.getName(), aliasNames.size() + 1, articles.size(), aliasOnly);
+            }
             return new NewsFetchResult(articles, true);
 
         } catch (Exception e) {
@@ -111,6 +121,27 @@ public class NewsService {
             log.error("뉴스 수집 실패 ({}): {}", stock.getName(), e.getMessage());
             return new NewsFetchResult(List.of(), false);
         }
+    }
+
+    /** 네이버 뉴스 검색 API 를 한 번 호출한다 (query 는 이미 따옴표로 감싼 검색어). 테스트에서 바꿔 끼울 수 있게 분리. */
+    String callNewsApi(String query) {
+        // TLS 인증서 검증은 JDK 기본 신뢰 저장소로 수행한다.
+        // (이전에는 모든 인증서를 신뢰하도록 검증을 꺼 두어, 중간자 공격 시 API 시크릿이 노출될 수 있었다.)
+        WebClient client = WebClient.builder()
+                .baseUrl(newsUrl)
+                .defaultHeader("X-Naver-Client-Id", clientId)
+                .defaultHeader("X-Naver-Client-Secret", clientSecret)
+                .build();
+
+        return client.get()
+                .uri(uriBuilder -> uriBuilder
+                        .queryParam("query", query)
+                        .queryParam("display", 30) // 중복·48시간·종목명 필터 후에도 5건을 채우기 위해 20→30
+                        .queryParam("sort", "sim")
+                        .build())
+                .retrieve()
+                .bodyToMono(String.class)
+                .block(Duration.ofSeconds(10)); // 응답이 없을 때 무한 대기하지 않도록 제한
     }
 
     /**
@@ -155,13 +186,37 @@ public class NewsService {
      * @throws IOException 응답이 비었거나 JSON 이 아니거나 items 배열이 없을 때 (= 해석 실패)
      */
     List<NewsArticle> parseNews(String response, String stockName, ZonedDateTime now) throws IOException {
-        if (response == null || response.isBlank()) {
-            throw new IOException("뉴스 API 응답이 비어 있음");
+        return parseNews(List.of(response == null ? "" : response), stockName, List.of(), now);
+    }
+
+    /**
+     * 공식 종목명 응답(responses[0])과 별칭 응답(나머지)을 번갈아 합쳐(round-robin) 같은 필터를 적용한다.
+     * 제목에 공식 종목명 또는 별칭이 독립 단어로 들어 있어야 한다. 별칭 응답이 null·비정상이면 건너뛴다.
+     *
+     * @throws IOException 공식 종목명 응답을 해석하지 못할 때
+     */
+    List<NewsArticle> parseNews(List<String> responses, String stockName, List<String> aliasNames, ZonedDateTime now)
+            throws IOException {
+        String official = (responses == null || responses.isEmpty()) ? null : responses.get(0);
+        List<List<JsonNode>> lists = new ArrayList<>();
+        lists.add(itemsOf(official));   // 해석 실패 시 IOException
+        for (int i = 1; responses != null && i < responses.size(); i++) {
+            try {
+                lists.add(itemsOf(responses.get(i)));
+            } catch (IOException e) {
+                log.warn("별칭 응답 해석 실패, 건너뜀 ({}): {}", stockName, e.getMessage());
+            }
         }
-        JsonNode root = objectMapper.readTree(response);
-        JsonNode items = root.get("items");
-        if (items == null || !items.isArray()) {
-            throw new IOException("뉴스 API 응답에 items 배열이 없음");
+        // 별칭이 여러 개여도 공식 종목명 결과가 밀리지 않도록, 별칭 응답들은 먼저 한 줄(별칭 줄)로 번갈아 합치고
+        // 그다음 공식 줄과 별칭 줄을 번갈아 놓는다: 공식1, 별칭1, 공식2, 별칭2, 공식3 …
+        List<JsonNode> officialLane = lists.get(0);
+        List<JsonNode> aliasLane = interleave(lists.subList(1, lists.size()));
+        List<JsonNode> merged = interleave(List.of(officialLane, aliasLane));
+
+        List<String> names = new ArrayList<>();
+        names.add(stockName);
+        if (aliasNames != null) {
+            for (String a : aliasNames) if (a != null && !a.isEmpty() && !names.contains(a)) names.add(a);
         }
 
         ZonedDateTime cutoff = now.minusHours(48);
@@ -170,7 +225,7 @@ public class NewsService {
         Set<String> keptLinks = new HashSet<>();
         int duplicates = 0;
         int otherCompany = 0;
-        for (JsonNode item : items) {
+        for (JsonNode item : merged) {
             if (result.size() >= 5) break;
 
             // 48시간 필터
@@ -182,12 +237,12 @@ public class NewsService {
 
             // 2차: 제목에 종목명 포함 여부 확인
             String title = cleanHtml(item.path("title").asText(""));
-            if (!title.contains(stockName)) {
+            if (!containsAny(title, names)) {
                 log.debug("종목명 미포함 제외: {}", title);
                 continue;
             }
             // 종목명이 다른 단어의 앞부분으로만 나오는 기사(예: 에스엠 종목의 "에스엠벡셀")는 다른 회사 기사로 본다
-            if (!mentionsAsOwnWord(title, stockName)) {
+            if (!mentionsAnyAsOwnWord(title, names)) {
                 otherCompany++;
                 log.debug("다른 단어 일부로만 종목명이 나와 제외: {}", title);
                 continue;
@@ -195,7 +250,7 @@ public class NewsService {
 
             // 중복 제거: 같은 링크이거나 제목이 (거의) 같으면 먼저 나온 기사만 남긴다
             String link = item.path("link").asText("");
-            String normalized = normalizeTitle(title, stockName);
+            String normalized = normalizeTitle(title, names);
             if ((!link.isBlank() && keptLinks.contains(link)) || isDuplicateOfAny(normalized, keptTitles)) {
                 duplicates++;
                 log.debug("중복 기사 제외: {}", title);
@@ -215,6 +270,45 @@ public class NewsService {
         log.debug("중복 기사 {}건, 다른 단어 일부로만 종목명이 나온 기사 {}건 제외 ({}): 최종 {}건",
                 duplicates, otherCompany, stockName, result.size());
         return result;
+    }
+
+    private List<JsonNode> itemsOf(String response) throws IOException {
+        if (response == null || response.isBlank()) {
+            throw new IOException("뉴스 API 응답이 비어 있음");
+        }
+        JsonNode root = objectMapper.readTree(response);
+        JsonNode items = root.get("items");
+        if (items == null || !items.isArray()) {
+            throw new IOException("뉴스 API 응답에 items 배열이 없음");
+        }
+        List<JsonNode> list = new ArrayList<>();
+        items.forEach(list::add);
+        return list;
+    }
+
+    /** 여러 목록을 앞에서부터 하나씩 번갈아 뽑아 한 줄로 만든다. 순수 함수. */
+    static <T> List<T> interleave(List<List<T>> lists) {
+        List<T> out = new ArrayList<>();
+        for (int idx = 0, added = 1; added > 0; idx++) {
+            added = 0;
+            for (List<T> l : lists) {
+                if (idx < l.size()) {
+                    out.add(l.get(idx));
+                    added++;
+                }
+            }
+        }
+        return out;
+    }
+
+    private static boolean containsAny(String title, List<String> names) {
+        for (String n : names) if (title.contains(n)) return true;
+        return false;
+    }
+
+    private static boolean mentionsAnyAsOwnWord(String title, List<String> names) {
+        for (String n : names) if (mentionsAsOwnWord(title, n)) return true;
+        return false;
     }
 
     /**
@@ -278,6 +372,11 @@ public class NewsService {
      * 공백·문장부호·따옴표를 지운 뒤 종목명을 제거한다(모든 기사 제목에 들어 있어 유사도를 부풀리므로).
      */
     static String normalizeTitle(String title, String stockName) {
+        return normalizeTitle(title, stockName == null ? List.<String>of() : List.of(stockName));
+    }
+
+    /** 여러 이름(공식명·별칭)을 긴 것부터 제거하는 정규화. 이름이 하나면 위 오버로드와 같다. */
+    static String normalizeTitle(String title, List<String> names) {
         String t = title == null ? "" : title;
         String prev;
         do {
@@ -286,9 +385,14 @@ public class NewsService {
             t = TRAILING_TAG.matcher(t).replaceFirst("");
         } while (!t.equals(prev));
         t = NON_WORD.matcher(t.toLowerCase(Locale.ROOT)).replaceAll("");
-        String name = stockName == null ? ""
-                : NON_WORD.matcher(stockName.toLowerCase(Locale.ROOT)).replaceAll("");
-        if (!name.isEmpty()) t = t.replace(name, "");
+        List<String> normNames = new ArrayList<>();
+        for (String n : names) {
+            if (n == null) continue;
+            String name = NON_WORD.matcher(n.toLowerCase(Locale.ROOT)).replaceAll("");
+            if (!name.isEmpty()) normNames.add(name);
+        }
+        normNames.sort((x, y) -> Integer.compare(y.length(), x.length()));
+        for (String name : normNames) t = t.replace(name, "");
         return t;
     }
 
