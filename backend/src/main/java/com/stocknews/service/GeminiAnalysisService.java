@@ -478,6 +478,203 @@ public class GeminiAnalysisService {
         }
     }
 
+    // ===== 호출 구조 비교: 한 번에(BATCH) vs 종목별(PER_STOCK) (관리자 실험) =====
+
+    /**
+     * 같은 입력(기사 본문 포함)을 한 프롬프트에 모든 종목을 담아 한 번 부르는 방식(BATCH)과 종목마다 따로 부르는 방식(PER_STOCK)으로
+     * 번갈아 runs 번씩 호출해 모델 원본 출력을 센다. 대상 선택은 analyzeBatch 와 같고, 모델은 운영 체인에서 키가 있는 첫 항목만 쓴다(폴백 없음).
+     * 가드(미확인 이슈 제외)는 적용하지 않고 DB 에는 아무것도 쓰지 않는다. 변형 실행(반복 한 회) 앞에서 citationAbPauseSeconds 만큼 쉬고,
+     * PER_STOCK 안의 종목별 호출 사이에는 쉬지 않는다. 기사 글은 includeInput 일 때만 결과에 싣고, 로그에는 어떤 경우에도 남기지 않는다.
+     */
+    public StructureAbResult compareStructure(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap, int runs,
+                                              boolean includeInput) {
+        LocalDateTime startedAt = LocalDateTime.now();
+        List<Stock> targets = new ArrayList<>();
+        List<List<NewsArticle>> targetNews = new ArrayList<>();
+        int articleCount = 0;
+        int bodyCount = 0;
+        for (Stock stock : stocks) {
+            List<NewsArticle> articles = newsMap.getOrDefault(stock.getId(), List.of());
+            if (articles.isEmpty()) continue;
+            targets.add(stock);
+            targetNews.add(articles);
+            articleCount += articles.size();
+            for (NewsArticle a : articles) if (hasBody(a)) bodyCount++;
+        }
+        if (targets.isEmpty()) {
+            log.info("호출 구조 비교: 뉴스가 있는 종목이 없어 모델을 호출하지 않음");
+            return StructureAbResult.notRun(startedAt, runs, new StructureAbResult.Input(0, 0, 0, 0, 0),
+                    "뉴스가 있는 종목이 없어 모델을 호출하지 않았습니다.");
+        }
+        String batchPrompt = buildPrompt(targets, targetNews);
+        List<String> perStockPrompts = new ArrayList<>();
+        int perStockChars = 0;
+        for (int i = 0; i < targets.size(); i++) {
+            String p = buildPrompt(List.of(targets.get(i)), List.of(targetNews.get(i)));
+            perStockPrompts.add(p);
+            perStockChars += p.length();
+        }
+        List<ModelCompareResult.Article> shown = null;
+        if (includeInput) {
+            shown = new ArrayList<>();
+            for (int i = 0; i < targets.size(); i++) {
+                List<NewsArticle> list = targetNews.get(i);
+                for (int j = 0; j < list.size(); j++) {
+                    NewsArticle a = list.get(j);
+                    shown.add(new ModelCompareResult.Article(targets.get(i).getName(), i + 1, j + 1,
+                            clean(a.getTitle()), shownText(a), hasBody(a)));
+                }
+            }
+        }
+        StructureAbResult.Input input = new StructureAbResult.Input(targets.size(), articleCount, bodyCount,
+                batchPrompt.length(), perStockChars, shown);
+        ChainEntry entry = null;
+        for (ChainEntry e : resolveChain()) {
+            if (hasKey(e.provider())) { entry = e; break; }
+        }
+        if (entry == null) {
+            log.error("호출 구조 비교: 체인의 모든 제공자에 API 키가 없어 호출하지 못함");
+            return StructureAbResult.notRun(startedAt, runs, input, "사용할 수 있는 API 키가 없어 모델을 호출하지 않았습니다.");
+        }
+        log.info("호출 구조 비교 시작 - 모델 {}:{}, 변형당 {}회, 종목 {}개, 기사 {}건(본문 {}건), 프롬프트 한 번에 {}자 / 종목별 합계 {}자",
+                entry.provider(), entry.model(), runs, targets.size(), articleCount, bodyCount, batchPrompt.length(),
+                perStockChars);
+
+        List<StructureAbResult.Repetition> reps = new ArrayList<>();
+        for (int i = 1; i <= runs; i++) {
+            List<String> order = i % 2 == 1 ? List.of(StructureAbResult.BATCH, StructureAbResult.PER_STOCK)
+                    : List.of(StructureAbResult.PER_STOCK, StructureAbResult.BATCH);
+            for (String variant : order) {
+                if (citationAbPauseSeconds > 0) {
+                    try {
+                        Thread.sleep(citationAbPauseSeconds * 1000L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                reps.add(StructureAbResult.BATCH.equals(variant)
+                        ? structureBatch(entry, i, batchPrompt, targets, targetNews)
+                        : structurePerStock(entry, i, perStockPrompts, targets, targetNews));
+            }
+        }
+        Map<String, StructureAbResult.VariantTotals> totals = StructureAbResult.totalsByVariant(reps);
+        totals.forEach((variant, t) -> log.info(
+                "호출 구조 비교 합계 - {}: 성공 {}회, 실패 {}회, API 호출 {}회, 종목 실패 {}, 이슈 {}개(숫자 포함 {}), 인용 {}개, 숫자 {}개 중 미확인 {}개 (다른 기사 {}, 다른 종목 {}, 어느 기사에도 없음 {}), 중앙 소요 {}ms, 평균 프롬프트 토큰 {}, 평균 출력 토큰 {}",
+                variant, t.repetitionsOk(), t.repetitionsFailed(), t.apiCalls(), t.stocksFailed(), t.issues(),
+                t.issuesWithNumbers(), t.citations(), t.numbersTotal(), t.unverified(), t.otherArticle(), t.otherStock(),
+                t.notFound(), t.medianElapsedMs(), t.meanPromptTokens(), t.meanOutputTokens()));
+        return new StructureAbResult(startedAt, entry.model(), runs, input, totals, reps, null);
+    }
+
+    private StructureAbResult.Repetition structureBatch(ChainEntry entry, int iteration, String prompt,
+                                                        List<Stock> targets, List<List<NewsArticle>> targetNews) {
+        long started = System.currentTimeMillis();
+        int[] newsCounts = targetNews.stream().mapToInt(List::size).toArray();
+        Integer promptTokens = null;
+        Integer outputTokens = null;
+        try {
+            ModelResponse response = callProvider(entry.provider(), entry.model(), prompt);
+            promptTokens = response.promptTokens();
+            outputTokens = response.outputTokens();
+            Map<Integer, StockAnalysis> analyses = parseAndValidate(objectMapper, response.text(), newsCounts);
+            return structureRepetition(StructureAbResult.BATCH, iteration, started, 1, null, analyses,
+                    targets, targetNews, promptTokens, outputTokens, targets.size() - analyses.size());
+        } catch (Exception e) {
+            String code = citationErrorCode(e);
+            log.warn("호출 구조 비교 - {} #{} 실패: {}", StructureAbResult.BATCH, iteration, code);
+            if (e instanceof ClaudeAnalysisClient.CallException c) {
+                promptTokens = addNullable(promptTokens, c.inputTokens());
+                outputTokens = addNullable(outputTokens, c.outputTokens());
+            }
+            return failedRepetition(StructureAbResult.BATCH, iteration, code, 1, targets.size(), started,
+                    promptTokens, outputTokens);
+        }
+    }
+
+    private StructureAbResult.Repetition structurePerStock(ChainEntry entry, int iteration, List<String> prompts,
+                                                           List<Stock> targets, List<List<NewsArticle>> targetNews) {
+        long started = System.currentTimeMillis();
+        Map<Integer, StockAnalysis> combined = new LinkedHashMap<>();
+        String firstError = null;
+        int stocksFailed = 0;
+        Integer promptTokens = null;
+        Integer outputTokens = null;
+        for (int i = 0; i < targets.size(); i++) {
+            try {
+                ModelResponse response = callProvider(entry.provider(), entry.model(), prompts.get(i));
+                promptTokens = addNullable(promptTokens, response.promptTokens());
+                outputTokens = addNullable(outputTokens, response.outputTokens());
+                Map<Integer, StockAnalysis> one = parseAndValidate(objectMapper, response.text(),
+                        new int[]{targetNews.get(i).size()});
+                StockAnalysis a = one.get(0);
+                if (a == null) {
+                    stocksFailed++;
+                    if (firstError == null) firstError = "INVALID_RESPONSE";
+                } else {
+                    combined.put(i, a);
+                }
+            } catch (Exception e) {
+                stocksFailed++;
+                String code = citationErrorCode(e);
+                if (firstError == null) firstError = code;
+                log.warn("호출 구조 비교 - {} #{} 종목 {}번 실패: {}", StructureAbResult.PER_STOCK, iteration, i + 1, code);
+                if (e instanceof ClaudeAnalysisClient.CallException c) {
+                    promptTokens = addNullable(promptTokens, c.inputTokens());
+                    outputTokens = addNullable(outputTokens, c.outputTokens());
+                }
+            }
+        }
+        if (combined.isEmpty()) {
+            return failedRepetition(StructureAbResult.PER_STOCK, iteration, firstError, targets.size(), targets.size(),
+                    started, promptTokens, outputTokens);
+        }
+        return structureRepetition(StructureAbResult.PER_STOCK, iteration, started, targets.size(), firstError, combined,
+                targets, targetNews, promptTokens, outputTokens, stocksFailed);
+    }
+
+    private StructureAbResult.Repetition failedRepetition(String variant, int iteration, String code, int apiCalls,
+                                                          int stocksFailed, long started, Integer promptTokens,
+                                                          Integer outputTokens) {
+        return new StructureAbResult.Repetition(variant, iteration, false, code, apiCalls, 0, stocksFailed,
+                elapsed(started), promptTokens, outputTokens, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+    }
+
+    private StructureAbResult.Repetition structureRepetition(String variant, int iteration, long started, int apiCalls,
+                                                             String errorCode, Map<Integer, StockAnalysis> analyses,
+                                                             List<Stock> targets, List<List<NewsArticle>> targetNews,
+                                                             Integer promptTokens, Integer outputTokens, int stocksFailed) {
+        // 모든 대상 종목을 한꺼번에 놓고 잰다 (두 변형 모두 OTHER_STOCK 을 찾을 수 있게)
+        NumericGrounding.Result g = measureNumbers(targets, targetNews, analyses);
+        int issues = 0;
+        int citations = 0;
+        List<ModelCompareResult.Output> outputs = new ArrayList<>();
+        for (Map.Entry<Integer, StockAnalysis> en : analyses.entrySet()) {
+            int idx = en.getKey();
+            String name = targets.get(idx).getName();
+            for (Issue issue : en.getValue().issues()) {
+                issues++;
+                citations += issue.sources().size();
+                outputs.add(new ModelCompareResult.Output(name, idx + 1, issue.text(), issue.sources()));
+            }
+        }
+        List<CitationAbResult.Detail> details = new ArrayList<>();
+        int otherArticle = 0, otherStock = 0, notFound = 0;
+        for (NumericGrounding.UnverifiedDetail d : g.details()) {
+            details.add(new CitationAbResult.Detail(d.stock(), d.number(), d.category(), d.sources(), d.issue()));
+            if (NumericGrounding.CAT_OTHER_ARTICLE.equals(d.category())) otherArticle++;
+            else if (NumericGrounding.CAT_OTHER_STOCK.equals(d.category())) otherStock++;
+            else if (NumericGrounding.CAT_NOT_FOUND.equals(d.category())) notFound++;
+        }
+        long elapsedMs = elapsed(started);
+        // 문장·기사 글은 로그에 남기지 않는다 (개수만)
+        log.info("호출 구조 비교 - {} #{}: 성공 {}ms, API 호출 {}회, 종목 {}개(실패 {}), 이슈 {}개(숫자 포함 {}), 숫자 {}개, 미확인 {}개, 다른 기사 {}개, 다른 종목 {}개, 어느 기사에도 없음 {}개",
+                variant, iteration, elapsedMs, apiCalls, analyses.size(), stocksFailed, issues, g.issuesWithNumbers(),
+                g.numbersTotal(), g.unverifiedNumbers(), otherArticle, otherStock, notFound);
+        return new StructureAbResult.Repetition(variant, iteration, true, errorCode, apiCalls, analyses.size(),
+                stocksFailed, elapsedMs, promptTokens, outputTokens, issues, citations, g.issuesWithNumbers(),
+                g.numbersTotal(), g.unverifiedNumbers(), otherArticle, otherStock, notFound, details, outputs);
+    }
+
     // ===== 기사 본문 입력 모델 비교 (관리자 실험) =====
 
     /**

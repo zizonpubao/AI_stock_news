@@ -9,6 +9,7 @@ import com.stocknews.repository.StockRepository;
 import com.stocknews.service.ArchiveService;
 import com.stocknews.service.ArticleBodyFetcher;
 import com.stocknews.service.CitationAbResult;
+import com.stocknews.service.StructureAbResult;
 import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.MarketPriceService;
 import com.stocknews.service.ModelCompareResult;
@@ -177,6 +178,27 @@ public class StockScheduler {
             }
             return Optional.of(geminiAnalysisService.compareModels(capture.stocks, capture.newsMap, runs, models, pause,
                     includeInput));
+        } finally {
+            running.set(false);
+        }
+    }
+
+    /**
+     * 호출 구조 비교 실험(한 번에 vs 종목별): runCitationAb 와 같은 방식으로 사이클 한 번을 돌린 뒤, 같은 메모리의 뉴스(본문 포함)로
+     * 비교한다. 결과는 어디에도 저장하지 않고, running 플래그를 실험이 끝날 때까지 잡는다. 이미 진행 중이면 빈 Optional.
+     */
+    public Optional<StructureAbResult> runStructureAb(int runs, boolean includeInput) {
+        if (!running.compareAndSet(false, true)) return Optional.empty();
+        try {
+            LocalDateTime startedAt = LocalDateTime.now();
+            CycleCapture capture = new CycleCapture();
+            runUpdateCycle(PipelineRun.TRIGGER_MANUAL, capture);
+            if (!capture.reachedAnalysis) {
+                log.warn("호출 구조 비교: 사이클이 분석 단계에 이르지 못해 비교 실험을 하지 않음");
+                return Optional.of(StructureAbResult.notRun(startedAt, runs, new StructureAbResult.Input(0, 0, 0, 0, 0),
+                        "수집 사이클이 분석 단계까지 가지 못해 비교 실험을 하지 않았습니다."));
+            }
+            return Optional.of(geminiAnalysisService.compareStructure(capture.stocks, capture.newsMap, runs, includeInput));
         } finally {
             running.set(false);
         }
