@@ -63,7 +63,7 @@ public class GeminiAnalysisService {
     private boolean dropUnverifiedIssues = false;
 
     /** 종목마다 따로 호출해 다른 종목 기사의 내용이 섞이지 않게 한다 (analysis.per-stock). 손으로 만든 인스턴스는 false 로 한 번에 호출하는 기존 동작을 유지한다. */
-    @Value("${analysis.per-stock:true}")
+    @Value("${analysis.per-stock:false}")
     private boolean perStock = false;
 
     /** 종목별 호출 사이에 쉬는 시간(ms). 호출은 순차이며 병렬로 하지 않는다. */
