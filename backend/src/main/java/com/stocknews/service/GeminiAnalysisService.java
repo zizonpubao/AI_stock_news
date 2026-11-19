@@ -58,6 +58,33 @@ public class GeminiAnalysisService {
     @Value("${openai.api.key:}")
     private String openaiApiKey;
 
+    /** 인용 기사에서 숫자를 확인하지 못한 이슈 문장을 저장하지 않는다 (analysis.drop-unverified-issues). 손으로 만든 인스턴스는 false 로 기존 동작을 유지한다. */
+    @Value("${analysis.drop-unverified-issues:true}")
+    private boolean dropUnverifiedIssues = false;
+
+    /** 종목마다 따로 호출해 다른 종목 기사의 내용이 섞이지 않게 한다 (analysis.per-stock). 손으로 만든 인스턴스는 false 로 한 번에 호출하는 기존 동작을 유지한다. */
+    @Value("${analysis.per-stock:true}")
+    private boolean perStock = false;
+
+    /** 종목별 호출 사이에 쉬는 시간(ms). 호출은 순차이며 병렬로 하지 않는다. */
+    @Value("${analysis.per-stock.pause-ms:0}")
+    private long perStockPauseMs = 0;
+
+    /** 테스트용 스위치 */
+    void setPerStock(boolean perStock) {
+        this.perStock = perStock;
+    }
+
+    /** 테스트용 */
+    void setPerStockPauseMs(long perStockPauseMs) {
+        this.perStockPauseMs = perStockPauseMs;
+    }
+
+    /** 테스트용 스위치 */
+    void setDropUnverifiedIssues(boolean dropUnverifiedIssues) {
+        this.dropUnverifiedIssues = dropUnverifiedIssues;
+    }
+
     @Value("${analysis.models:}")
     private String analysisModels;
 
@@ -117,12 +144,23 @@ public class GeminiAnalysisService {
      * analyzeAllStocks 실행 요약. model 은 성공한 모델 (전부 실패했거나 호출하지 않았으면 null).
      * numbersTotal·numbersUnverified 는 저장된 이슈 문장 속 숫자의 총수와 인용 기사에서 확인되지 않은 숫자 수 (측정만 하고 문장은 고치지 않는다).
      * numbersNotInAnyArticle 는 그중 같은 종목의 어느 기사에도 없는 숫자 수, numbersUnverifiedDetail 은 확인되지 않은 숫자 전부의 JSON 배열 문자열.
-     * 측정하지 않았으면 네 값 모두 null.
+     * 측정하지 않았으면 네 값 모두 null. 숫자 측정값은 모델이 낸 원본 기준이다.
+     * issuesDropped 는 인용 기사에서 숫자를 확인하지 못해 내보내지 않은 이슈 문장 수 (가드를 끄면 null).
      */
     public record AnalysisSummary(String model, int requested, int success, int failed, int skipped,
                                   Integer promptTokens, Integer outputTokens, long elapsedMs,
                                   Integer numbersTotal, Integer numbersUnverified,
-                                  Integer numbersNotInAnyArticle, String numbersUnverifiedDetail) {
+                                  Integer numbersNotInAnyArticle, String numbersUnverifiedDetail,
+                                  Integer issuesDropped) {
+        /** 내보내지 않은 이슈 수 없는 요약 (기존 호출부용) */
+        public AnalysisSummary(String model, int requested, int success, int failed, int skipped,
+                               Integer promptTokens, Integer outputTokens, long elapsedMs,
+                               Integer numbersTotal, Integer numbersUnverified,
+                               Integer numbersNotInAnyArticle, String numbersUnverifiedDetail) {
+            this(model, requested, success, failed, skipped, promptTokens, outputTokens, elapsedMs,
+                    numbersTotal, numbersUnverified, numbersNotInAnyArticle, numbersUnverifiedDetail, null);
+        }
+
         /** 상세 없는 측정값 (기존 호출부용) */
         public AnalysisSummary(String model, int requested, int success, int failed, int skipped,
                                Integer promptTokens, Integer outputTokens, long elapsedMs,
@@ -148,6 +186,73 @@ public class GeminiAnalysisService {
      * newsMap 의 기사 목록 순서가 곧 인용 번호(1부터)다. 호출 측은 저장 순서(id 오름차순)로 넘겨야 한다.
      */
     public AnalysisSummary analyzeAllStocks(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap) {
+        if (!perStock) return analyzeBatch(stocks, newsMap);
+
+        long startedAt = System.currentTimeMillis();
+        log.info("종목별 호출 모드: {}개 종목", stocks.size());
+        List<AnalysisSummary> parts = new ArrayList<>();
+        for (int i = 0; i < stocks.size(); i++) {
+            if (i > 0 && perStockPauseMs > 0) {
+                try {
+                    Thread.sleep(perStockPauseMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("종목별 호출 사이 대기가 중단됨");
+                }
+            }
+            Stock stock = stocks.get(i);
+            // 한 종목이 실패해도(체인 전체 실패 포함) 나머지 종목은 계속 분석한다
+            parts.add(analyzeBatch(List.of(stock), newsMap));
+        }
+        AnalysisSummary merged = mergeSummaries(parts, elapsed(startedAt));
+        log.info("종목별 호출 완료 - 호출 {}회, 성공 {}, 실패 {}, 건너뜀 {}, 프롬프트 토큰 {}, 출력 토큰 {}, 소요 {}ms, "
+                        + "숫자 {}개 중 미확인 {}개(어느 기사에도 없음 {}개), 내보내지 않은 이슈 문장 {}",
+                parts.stream().filter(p -> p.requested() > 0).count(), merged.success(), merged.failed(), merged.skipped(),
+                merged.promptTokens(), merged.outputTokens(), merged.elapsedMs(),
+                merged.numbersTotal(), merged.numbersUnverified(), merged.numbersNotInAnyArticle(), merged.issuesDropped());
+        return merged;
+    }
+
+    /** 종목별 호출 결과를 하나의 요약으로 합친다. 값이 하나도 없으면 null. */
+    private AnalysisSummary mergeSummaries(List<AnalysisSummary> parts, long elapsedMs) {
+        int requested = 0, success = 0, failed = 0, skipped = 0;
+        Integer prompt = null, output = null, total = null, unverified = null, notInAny = null, dropped = null;
+        Set<String> models = new LinkedHashSet<>();
+        com.fasterxml.jackson.databind.node.ArrayNode details = null;
+        for (AnalysisSummary p : parts) {
+            requested += p.requested();
+            success += p.success();
+            failed += p.failed();
+            skipped += p.skipped();
+            prompt = addNullable(prompt, p.promptTokens());
+            output = addNullable(output, p.outputTokens());
+            total = addNullable(total, p.numbersTotal());
+            unverified = addNullable(unverified, p.numbersUnverified());
+            notInAny = addNullable(notInAny, p.numbersNotInAnyArticle());
+            dropped = addNullable(dropped, p.issuesDropped());
+            if (p.model() != null) models.add(p.model());
+            if (p.numbersUnverifiedDetail() != null) {
+                if (details == null) details = objectMapper.createArrayNode();
+                try {
+                    JsonNode arr = objectMapper.readTree(p.numbersUnverifiedDetail());
+                    if (arr.isArray()) details.addAll((com.fasterxml.jackson.databind.node.ArrayNode) arr);
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException("상세 JSON 해석 실패", e);
+                }
+            }
+        }
+        return new AnalysisSummary(models.isEmpty() ? null : String.join(",", models), requested, success, failed, skipped,
+                prompt, output, elapsedMs, total, unverified, notInAny,
+                details == null ? null : details.toString(), dropped);
+    }
+
+    private static Integer addNullable(Integer sum, Integer v) {
+        if (v == null) return sum;
+        return sum == null ? v : sum + v;
+    }
+
+    /** 주어진 종목들을 한 번의 API 호출로 분석한다 (종목별 모드에서는 종목 하나씩 부른다). */
+    AnalysisSummary analyzeBatch(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap) {
         long startedAt = System.currentTimeMillis();
 
         // 1) 뉴스가 없는 종목은 요청에 넣지 않고 NO_NEWS 로 기록
@@ -195,11 +300,41 @@ public class GeminiAnalysisService {
                 continue;
             }
 
+            // 측정은 모델이 낸 원본 기준으로 한다. 저장 전에 걸러내므로 걸러내기 전에 먼저 잰다.
+            NumericGrounding.Result grounding = measureNumbers(targets, targetNews, analyses);
+
+            // 인용 기사에서 숫자를 확인하지 못한 이슈 문장은 저장하지 않는다.
+            // 알려진 한계: 이슈 문장만 거른다. positives·caution·risks 는 인용 번호가 없어 대조하지 않고 그대로 둔다.
+            Integer issuesDropped = null;
+            Map<Integer, StockAnalysis> toSave = analyses;
+            if (dropUnverifiedIssues) {
+                toSave = new LinkedHashMap<>();
+                int dropped = 0;
+                for (Map.Entry<Integer, StockAnalysis> e : analyses.entrySet()) {
+                    int idx = e.getKey();
+                    StockAnalysis a = e.getValue();
+                    List<String> texts = articleTexts(targetNews.get(idx));
+                    List<Issue> kept = new ArrayList<>();
+                    for (Issue issue : a.issues()) {
+                        List<String> unverified = NumericGrounding.unverifiedOf(texts, issue);
+                        if (unverified.isEmpty()) {
+                            kept.add(issue);
+                        } else {
+                            dropped++;
+                            log.info("수치 근거 미확인 이슈 제외 - 종목 {}, 확인 못 한 숫자 {}, 인용 {}, 문장 {}",
+                                    targets.get(idx).getName(), unverified, issue.sources(), issue.text());
+                        }
+                    }
+                    toSave.put(idx, new StockAnalysis(a.sentiment(), kept, a.positives(), a.caution(), a.risks()));
+                }
+                issuesDropped = dropped;
+            }
+
             int success = 0;
             int failed = 0;
             for (int i = 0; i < targets.size(); i++) {
-                StockAnalysis analysis = analyses.get(i);
-                if (analysis == null) {
+                StockAnalysis analysis = toSave.get(i);
+                if (analysis == null || analysis.issues().isEmpty()) {
                     log.warn("응답에서 유효한 분석을 얻지 못함: {} → FAILED(INVALID_RESPONSE)", targets.get(i).getName());
                     markFailed(targets.get(i), AnalysisFailReason.INVALID_RESPONSE);
                     failed++;
@@ -208,16 +343,16 @@ public class GeminiAnalysisService {
                     success++;
                 }
             }
-            NumericGrounding.Result grounding = measureNumbers(targets, targetNews, analyses);
             AnalysisSummary summary = new AnalysisSummary(model, targets.size(), success, failed, skipped,
                     response.promptTokens(), response.outputTokens(), elapsed(startedAt),
                     grounding.numbersTotal(), grounding.unverifiedNumbers(),
-                    grounding.numbersNotInAnyArticle(), grounding.detailsJson());
+                    grounding.numbersNotInAnyArticle(), grounding.detailsJson(), issuesDropped);
             log.info("AI 분석 완료 - 제공자 {}, 모델 {}, 성공 {}, 실패 {}, 건너뜀 {}, 프롬프트 토큰 {}, 출력 토큰 {}, 생각 토큰 {}, 소요 {}ms",
                     entry.provider(), model, success, failed, skipped, response.promptTokens(), response.outputTokens(),
                     response.thoughtTokens(), summary.elapsedMs());
-            log.info("수치 근거 측정 - 이슈 문장의 숫자 {}개 중 인용 기사에서 확인되지 않은 숫자 {}개, 그중 해당 종목의 어느 기사에도 없는 숫자 {}개 (측정만 하고 문장은 고치지 않음)",
-                    grounding.numbersTotal(), grounding.unverifiedNumbers(), grounding.numbersNotInAnyArticle());
+            log.info("수치 근거 측정 - 이슈 문장의 숫자 {}개 중 인용 기사에서 확인되지 않은 숫자 {}개, 그중 해당 종목의 어느 기사에도 없는 숫자 {}개 (모델 원본 기준), 내보내지 않은 이슈 문장 {}",
+                    grounding.numbersTotal(), grounding.unverifiedNumbers(), grounding.numbersNotInAnyArticle(),
+                    issuesDropped == null ? "해당 없음(가드 꺼짐)" : issuesDropped + "개");
             for (NumericGrounding.UnverifiedDetail d : grounding.details()) {
                 log.info("수치 근거 미확인 - 종목 {}, 숫자 {}, 구분 {}, 인용 {}, 문장 {}",
                         d.stock(), d.number(), d.category(), d.sources(), d.issue());
@@ -609,14 +744,19 @@ public class GeminiAnalysisService {
         List<NumericGrounding.StockInput> inputs = new ArrayList<>();
         for (Map.Entry<Integer, StockAnalysis> e : analyses.entrySet()) {
             int idx = e.getKey();
-            List<String> texts = new ArrayList<>();
-            for (NewsArticle a : targetNews.get(idx)) {
-                // 프롬프트에 실제로 들어간 글(본문 또는 요약)과 같은 글로 대조한다
-                texts.add(NumericGrounding.articleText(a.getTitle(), shownText(a), Integer.MAX_VALUE));
-            }
+            List<String> texts = articleTexts(targetNews.get(idx));
             inputs.add(new NumericGrounding.StockInput(targets.get(idx).getName(), texts, e.getValue().issues()));
         }
         return NumericGrounding.evaluate(inputs);
+    }
+
+    /** 프롬프트에 실제로 들어간 글(본문 또는 요약)과 같은 글로 대조하기 위한 기사별 글. 인용 번호 n 은 목록의 n-1 번째다. */
+    static List<String> articleTexts(List<NewsArticle> articles) {
+        List<String> texts = new ArrayList<>();
+        for (NewsArticle a : articles) {
+            texts.add(NumericGrounding.articleText(a.getTitle(), shownText(a), Integer.MAX_VALUE));
+        }
+        return texts;
     }
 
     /** 설정된 모델 이름 목록 (공백 제거). 실험 서비스가 기본 모델 목록으로 쓴다. */
