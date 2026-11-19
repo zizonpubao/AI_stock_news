@@ -121,6 +121,7 @@
 
 AI 리포트 아래에는 **네이버 검색 API로 수집한 관련 뉴스**가 붙습니다.
 - **48시간 이내** 발행 + **제목에 종목명이 독립된 단어로 나온** 기사만 선별합니다 (예: 종목 "에스엠"에 "에스엠벡셀" 기사가 붙지 않도록 함)
+- 기사 제목이 종목명과 다른 표기를 쓰는 종목은 **별칭**으로도 검색합니다 (예: `NAVER` → 네이버, `JYP Ent.` → JYP엔터테인먼트). 별칭 사전은 설정 파일(`news.aliases`)에서 손으로 관리하고, 목록에 없는 종목은 종목명만으로 검색합니다
 - 내용이 거의 같은 중복 기사는 제외합니다
 - 종목당 **최대 5건**, 제목·요약·발행일 표시
 - 분석 입력용으로 기사 원문에서 **본문 앞부분**을 가져옵니다. 요청 전에 언론사의 robots.txt 를 확인해 금지된 곳은 가져오지 않고, 본문은 저장하거나 화면에 표시하지 않습니다. 사진은 수집하지 않습니다
@@ -382,6 +383,7 @@ npm start   # http://localhost:3000
 | `GEMINI_API_KEY` | 예비 모델(Gemini) | 동일 |
 | `ANALYSIS_MODELS` | 모델 체인 변경용(`제공자:모델` 쉼표 목록). 비우면 기본 체인 | 선택 |
 | `NEWS_BODY_ENABLED` | 기사 본문 수집 켜기/끄기 (기본 `true`) | 선택 |
+| `NEWS_ALIASES_ENABLED` | 종목 별칭 검색 켜기/끄기 (기본 `true`) | 선택 |
 | `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` | PostgreSQL(운영) | 서버 `.env` |
 | `ADMIN_TOKEN` | 관리용 API(수동 갱신·아카이브) 인증 토큰. 비우면 해당 API 차단 | 서버 `.env` |
 | `CORS_ALLOWED_ORIGINS` | 허용 오리진 | 선택 (기본: localhost + `*.vercel.app`) |
