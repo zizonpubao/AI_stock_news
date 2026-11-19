@@ -60,8 +60,13 @@ public class PipelineRun {
     private Long analysisElapsedMs;
     /** 저장된 이슈 문장 속 숫자의 총수 (측정만 한다. 분석을 호출하지 않았거나 전부 실패하면 null) */
     private Integer numbersTotal;
-    /** 그중 인용 기사(제목+요약)에서 같은 표기를 찾지 못한 숫자 수. 표기가 다른 같은 값도 포함되므로 환각 수가 아니다. */
+    /** 그중 인용 기사(제목 + 모델에게 보여 준 본문 또는 요약, "천" 표기는 숫자로 환산)에서 같은 표기를 찾지 못한 숫자 수. 표기가 다른 같은 값이나 인용 번호 오류도 포함되므로 환각 수가 아니다. */
     private Integer numbersUnverified;
+    /** 그중 같은 종목의 어느 기사에도 없는 숫자 수 (인용 번호만 틀린 경우는 제외). 측정하지 않았으면 null */
+    private Integer numbersNotInAnyArticle;
+    /** 확인되지 않은 숫자 전부의 JSON 배열 [{stock, number, category(OTHER_ARTICLE/NOT_FOUND), sources, issue}]. 측정하지 않았으면 null, 없으면 "[]" */
+    @Column(columnDefinition = "TEXT")
+    private String numbersUnverifiedDetail;
 
     /** 본문을 AI 입력으로 쓴 기사 수 (BODY). 수집 단계에 도달하지 못한 실행은 null, 기능이 꺼져 있으면 0 */
     private Integer bodiesUsed;

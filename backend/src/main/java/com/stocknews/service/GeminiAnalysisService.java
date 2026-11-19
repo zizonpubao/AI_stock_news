@@ -98,14 +98,25 @@ public class GeminiAnalysisService {
     /**
      * analyzeAllStocks 실행 요약. model 은 성공한 모델 (전부 실패했거나 호출하지 않았으면 null).
      * numbersTotal·numbersUnverified 는 저장된 이슈 문장 속 숫자의 총수와 인용 기사에서 확인되지 않은 숫자 수 (측정만 하고 문장은 고치지 않는다).
+     * numbersNotInAnyArticle 는 그중 같은 종목의 어느 기사에도 없는 숫자 수, numbersUnverifiedDetail 은 확인되지 않은 숫자 전부의 JSON 배열 문자열.
+     * 측정하지 않았으면 네 값 모두 null.
      */
     public record AnalysisSummary(String model, int requested, int success, int failed, int skipped,
                                   Integer promptTokens, Integer outputTokens, long elapsedMs,
-                                  Integer numbersTotal, Integer numbersUnverified) {
+                                  Integer numbersTotal, Integer numbersUnverified,
+                                  Integer numbersNotInAnyArticle, String numbersUnverifiedDetail) {
+        /** 상세 없는 측정값 (기존 호출부용) */
+        public AnalysisSummary(String model, int requested, int success, int failed, int skipped,
+                               Integer promptTokens, Integer outputTokens, long elapsedMs,
+                               Integer numbersTotal, Integer numbersUnverified) {
+            this(model, requested, success, failed, skipped, promptTokens, outputTokens, elapsedMs,
+                    numbersTotal, numbersUnverified, null, null);
+        }
+
         /** 수치 근거 측정값이 없는 요약 (호출하지 않았거나 전부 실패한 경우) */
         public AnalysisSummary(String model, int requested, int success, int failed, int skipped,
                                Integer promptTokens, Integer outputTokens, long elapsedMs) {
-            this(model, requested, success, failed, skipped, promptTokens, outputTokens, elapsedMs, null, null);
+            this(model, requested, success, failed, skipped, promptTokens, outputTokens, elapsedMs, null, null, null, null);
         }
     }
 
@@ -182,12 +193,17 @@ public class GeminiAnalysisService {
             NumericGrounding.Result grounding = measureNumbers(targets, targetNews, analyses);
             AnalysisSummary summary = new AnalysisSummary(model, targets.size(), success, failed, skipped,
                     response.promptTokens(), response.outputTokens(), elapsed(startedAt),
-                    grounding.numbersTotal(), grounding.unverifiedNumbers());
+                    grounding.numbersTotal(), grounding.unverifiedNumbers(),
+                    grounding.numbersNotInAnyArticle(), grounding.detailsJson());
             log.info("AI 분석 완료 - 제공자 {}, 모델 {}, 성공 {}, 실패 {}, 건너뜀 {}, 프롬프트 토큰 {}, 출력 토큰 {}, 생각 토큰 {}, 소요 {}ms",
                     entry.provider(), model, success, failed, skipped, response.promptTokens(), response.outputTokens(),
                     response.thoughtTokens(), summary.elapsedMs());
-            log.info("수치 근거 측정 - 이슈 문장의 숫자 {}개 중 인용 기사에서 확인되지 않은 숫자 {}개 (측정만 하고 문장은 고치지 않음)",
-                    grounding.numbersTotal(), grounding.unverifiedNumbers());
+            log.info("수치 근거 측정 - 이슈 문장의 숫자 {}개 중 인용 기사에서 확인되지 않은 숫자 {}개, 그중 해당 종목의 어느 기사에도 없는 숫자 {}개 (측정만 하고 문장은 고치지 않음)",
+                    grounding.numbersTotal(), grounding.unverifiedNumbers(), grounding.numbersNotInAnyArticle());
+            for (NumericGrounding.UnverifiedDetail d : grounding.details()) {
+                log.info("수치 근거 미확인 - 종목 {}, 숫자 {}, 구분 {}, 인용 {}, 문장 {}",
+                        d.stock(), d.number(), d.category(), d.sources(), d.issue());
+            }
             return summary;
         }
 
