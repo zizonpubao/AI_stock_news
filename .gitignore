@@ -37,3 +37,6 @@ yarn-error.log*
 # ===== 배포용 미리 빌드한 JAR (CI 가 만들어 서버로 전송) =====
 backend/app.jar
 backend/app.jar.*
+
+# 서버 실험 결과(기사 글이 들어갈 수 있어 올리지 않는다)
+experiment-results/

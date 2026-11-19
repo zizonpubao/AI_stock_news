@@ -75,15 +75,27 @@ class NumericGroundingDetailTest {
     }
 
     @Test
-    @DisplayName("어느 기사에도 없는 숫자는 NOT_FOUND 이고 두 집계에 모두 들어간다. 다른 종목의 기사는 보지 않는다")
+    @DisplayName("어느 종목의 기사에도 없는 숫자는 NOT_FOUND 이고 두 집계에 모두 들어간다")
     void numberInNoArticleIsNotFound() {
         Issue issue = new Issue("영업이익 777억", List.of(1));
         NumericGrounding.Result r = NumericGrounding.evaluate(List.of(
                 new NumericGrounding.StockInput("A", List.of("기사 100억"), List.of(issue)),
-                new NumericGrounding.StockInput("B", List.of("기사 777억"), List.of())));
+                new NumericGrounding.StockInput("B", List.of("기사 555억"), List.of())));
         assertThat(r.unverifiedNumbers()).isEqualTo(1);
         assertThat(r.numbersNotInAnyArticle()).isEqualTo(1);
         assertThat(r.details().get(0).category()).isEqualTo("NOT_FOUND");
+    }
+
+    @Test
+    @DisplayName("다른 종목의 기사에만 있는 숫자는 OTHER_STOCK 이고, 어느 기사에도 없는 숫자 수에는 들어가지 않는다 (실행 id 19 의 사례)")
+    void numberInOtherStockArticle() {
+        Issue issue = new Issue("3분기 연결 매출 195조3000억원", List.of(1));
+        NumericGrounding.Result r = NumericGrounding.evaluate(List.of(
+                new NumericGrounding.StockInput("삼성전자", List.of("기사 거래대금 9천810억원"), List.of(issue)),
+                new NumericGrounding.StockInput("삼성전자우", List.of("삼성전자의 3분기 연결 매출은 195조3000억원"), List.of())));
+        assertThat(r.unverifiedNumbers()).isEqualTo(3); // 3(분기), 195, 3000
+        assertThat(r.numbersNotInAnyArticle()).isZero();
+        assertThat(r.details()).allMatch(d -> d.category().equals("OTHER_STOCK"));
     }
 
     @Test

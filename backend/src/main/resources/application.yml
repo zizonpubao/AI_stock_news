@@ -25,10 +25,17 @@ anthropic:
   api:
     key: ${ANTHROPIC_API_KEY:}
 
+# 관리자 모델 비교 실험(기사 본문 입력)에서만 쓴다. 운영 분석 체인은 OpenAI 를 부르지 않는다.
+openai:
+  api:
+    key: ${OPENAI_API_KEY:}
+
 # 기사 본문 수집 (언론사 원문 주소). robots.txt 를 지킨다. 끄려면 NEWS_BODY_ENABLED=false
 news:
   body:
     enabled: ${NEWS_BODY_ENABLED:true}
+    # 본문을 얻지 못한 기사는 채택하지 않고 다음 후보로 넘어간다(다른 언론사의 같은 소식을 대신 채택). 끄려면 NEWS_REQUIRE_BODY=false
+    require: ${NEWS_REQUIRE_BODY:true}
     max-chars: 1500
     timeout-ms: 5000
     max-bytes: 1048576

@@ -62,17 +62,17 @@ public class PipelineRun {
     private Integer numbersTotal;
     /** 그중 인용 기사(제목 + 모델에게 보여 준 본문 또는 요약, "천" 표기는 숫자로 환산)에서 같은 표기를 찾지 못한 숫자 수. 표기가 다른 같은 값이나 인용 번호 오류도 포함되므로 환각 수가 아니다. */
     private Integer numbersUnverified;
-    /** 그중 같은 종목의 어느 기사에도 없는 숫자 수 (인용 번호만 틀린 경우는 제외). 측정하지 않았으면 null */
+    /** 그중 그 실행에서 모델에게 준 어느 기사(모든 종목)에도 없는 숫자 수 (근거만 잘못 붙은 경우는 제외). 측정하지 않았으면 null. 2026-11-19 15시대 배포 전 실행(id 15~20)은 같은 종목의 기사만 본 값이다. */
     private Integer numbersNotInAnyArticle;
-    /** 확인되지 않은 숫자 전부의 JSON 배열 [{stock, number, category(OTHER_ARTICLE/NOT_FOUND), sources, issue}]. 측정하지 않았으면 null, 없으면 "[]" */
+    /** 확인되지 않은 숫자 전부의 JSON 배열 [{stock, number, category(OTHER_ARTICLE/OTHER_STOCK/NOT_FOUND), sources, issue}]. 측정하지 않았으면 null, 없으면 "[]" */
     @Column(columnDefinition = "TEXT")
     private String numbersUnverifiedDetail;
 
     /** 본문을 AI 입력으로 쓴 기사 수 (BODY). 수집 단계에 도달하지 못한 실행은 null, 기능이 꺼져 있으면 0 */
     private Integer bodiesUsed;
-    /** robots 때문에 가져오지 않은 기사 수 (ROBOTS_DISALLOWED + AI_DISALLOWED + ROBOTS_UNKNOWN) */
+    /** robots 때문에 가져오지 않은 기사 수 (ROBOTS_DISALLOWED + AI_DISALLOWED + ROBOTS_UNKNOWN). 본문 필수 설정에서는 그래서 채택하지 않은 후보 수 */
     private Integer bodiesRobotsExcluded;
-    /** 가져오려 했지만 실패한 기사 수 (FETCH_FAILED + EXTRACT_FAILED + BUDGET_EXCEEDED + INVALID_URL) */
+    /** 가져오려 했지만 실패한 기사 수 (FETCH_FAILED + EXTRACT_FAILED + BUDGET_EXCEEDED + INVALID_URL). 본문 필수 설정에서는 그래서 채택하지 않은 후보 수 */
     private Integer bodiesFailed;
 
     /** OK / COLLECT_FAILED / AI_CALL_FAILED / PARTIAL / ERROR */

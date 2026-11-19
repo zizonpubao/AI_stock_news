@@ -50,6 +50,14 @@ public class GeminiAnalysisService {
     @Value("${analysis.citation-ab.pause-seconds:20}")
     private int citationAbPauseSeconds;
 
+    /** 기사 본문 입력 모델 비교(관리자 실험)에서 모델 호출 사이에 두는 기본 간격(초). 요청의 pause 로 덮어쓴다. */
+    @Value("${analysis.model-compare.pause-seconds:15}")
+    private int modelComparePauseSeconds;
+
+    /** 모델 비교 실험에서만 쓰는 OpenAI 키. 운영 분석 체인은 쓰지 않는다. */
+    @Value("${openai.api.key:}")
+    private String openaiApiKey;
+
     @Value("${analysis.models:}")
     private String analysisModels;
 
@@ -60,6 +68,7 @@ public class GeminiAnalysisService {
 
     static final String PROVIDER_CLAUDE = "claude";
     static final String PROVIDER_GEMINI = "gemini";
+    static final String PROVIDER_OPENAI = "openai";
     static final String DEFAULT_CHAIN = "claude:claude-haiku-5-5,gemini:gemini-3.5-flash-lite";
     private static final Pattern CHAIN_MODEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
 
@@ -75,6 +84,7 @@ public class GeminiAnalysisService {
     record ChainEntry(String provider, String model) {}
 
     private volatile ClaudeAnalysisClient claudeClient;
+    private volatile OpenAiAnalysisClient openAiClient;
 
     private static final String MODEL_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
     private static final String API_KEY_HEADER = "x-goog-api-key";
@@ -333,6 +343,174 @@ public class GeminiAnalysisService {
         }
     }
 
+    // ===== 기사 본문 입력 모델 비교 (관리자 실험) =====
+
+    /**
+     * 같은 입력(기사 본문 포함, 현재 운영 프롬프트)을 models 의 각 모델에 runs 번씩 보내 결과를 센다.
+     * 호출 순서는 회차 i=1..runs 마다 목록 순서대로이고, 호출마다 앞에 pause 간격을 둔다 (키 없는 제공자의 모델은 부르지 않고 건너뜀 표시).
+     * 모델 하나당 한 번 호출이고 다른 모델로 넘어가지 않는다. DB 에는 아무것도 쓰지 않는다.
+     * 기사 글은 includeInput 일 때만 결과에 싣고, 로그에는 어떤 경우에도 남기지 않는다.
+     *
+     * @param pauseOverride null 이면 설정값(analysis.model-compare.pause-seconds)을 쓴다
+     */
+    public ModelCompareResult compareModels(List<Stock> stocks, Map<Long, List<NewsArticle>> newsMap, int runs,
+                                            List<String> models, Integer pauseOverride, boolean includeInput) {
+        LocalDateTime startedAt = LocalDateTime.now();
+        int pause = Math.max(0, pauseOverride != null ? pauseOverride : modelComparePauseSeconds);
+        List<Stock> targets = new ArrayList<>();
+        List<List<NewsArticle>> targetNews = new ArrayList<>();
+        int articleCount = 0;
+        int bodyCount = 0;
+        for (Stock stock : stocks) {
+            List<NewsArticle> articles = newsMap.getOrDefault(stock.getId(), List.of());
+            if (articles.isEmpty()) continue;
+            targets.add(stock);
+            targetNews.add(articles);
+            articleCount += articles.size();
+            for (NewsArticle a : articles) if (hasBody(a)) bodyCount++;
+        }
+        if (targets.isEmpty()) {
+            log.info("모델 비교(본문 입력): 뉴스가 있는 종목이 없어 모델을 호출하지 않음");
+            return ModelCompareResult.notRun(startedAt, runs, pause, new ModelCompareResult.Input(0, 0, 0, 0), models,
+                    "뉴스가 있는 종목이 없어 모델을 호출하지 않았습니다.");
+        }
+        String prompt = buildPrompt(targets, targetNews);
+        List<ModelCompareResult.Article> shown = null;
+        if (includeInput) {
+            shown = new ArrayList<>();
+            for (int i = 0; i < targets.size(); i++) {
+                List<NewsArticle> list = targetNews.get(i);
+                for (int j = 0; j < list.size(); j++) {
+                    NewsArticle a = list.get(j);
+                    shown.add(new ModelCompareResult.Article(targets.get(i).getName(), i + 1, j + 1,
+                            clean(a.getTitle()), shownText(a), hasBody(a)));
+                }
+            }
+        }
+        ModelCompareResult.Input input = new ModelCompareResult.Input(targets.size(), articleCount, bodyCount,
+                prompt.length(), shown);
+        int[] newsCounts = targetNews.stream().mapToInt(List::size).toArray();
+
+        List<ChainEntry> entries = new ArrayList<>();
+        for (String key : models) {
+            int colon = key.indexOf(':');
+            entries.add(new ChainEntry(key.substring(0, colon), key.substring(colon + 1)));
+        }
+        log.info("모델 비교(본문 입력) 시작 - 모델 {}개, 모델당 {}회, 호출 간격 {}초, 종목 {}개, 기사 {}건(본문 {}건), 프롬프트 {}자",
+                entries.size(), runs, pause, targets.size(), articleCount, bodyCount, prompt.length());
+
+        Map<String, Boolean> skipped = new LinkedHashMap<>();
+        for (ChainEntry e : entries) {
+            boolean noKey = !hasKey(e.provider());
+            skipped.put(e.provider() + ":" + e.model(), noKey);
+            if (noKey) log.warn("모델 비교(본문 입력): {} API 키가 없어 '{}' 건너뜀", e.provider(), e.model());
+        }
+
+        List<ModelCompareResult.Call> calls = new ArrayList<>();
+        for (int i = 1; i <= runs; i++) {
+            for (ChainEntry e : entries) {
+                String key = e.provider() + ":" + e.model();
+                if (skipped.get(key)) continue;
+                if (pause > 0) {
+                    try {
+                        Thread.sleep(pause * 1000L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                calls.add(modelCompareCall(e, key, i, prompt, targets, targetNews, newsCounts));
+            }
+        }
+        Map<String, ModelCompareResult.ModelTotals> totals = new LinkedHashMap<>();
+        for (ChainEntry e : entries) {
+            String key = e.provider() + ":" + e.model();
+            ModelCompareResult.ModelTotals t = skipped.get(key) ? ModelCompareResult.skippedTotals()
+                    : ModelCompareResult.totals(calls, key);
+            totals.put(key, t);
+            log.info("모델 비교(본문 입력) 합계 - {}: {}성공 {}회, 실패 {}회, 이슈 {}개(숫자 포함 {}개), 인용 {}개, 숫자 {}개 중 미확인 {}개 (다른 기사 {}, 어느 기사에도 없음 {}), 중앙 소요 {}ms, 평균 프롬프트 토큰 {}, 평균 출력 토큰 {}",
+                    key, t.skipped() ? "(키 없음, 건너뜀) " : "", t.callsOk(), t.callsFailed(), t.issues(),
+                    t.issuesWithNumbers(), t.citations(), t.numbersTotal(), t.unverified(), t.otherArticle(), t.notInAny(),
+                    t.medianElapsedMs(), t.meanPromptTokens(), t.meanOutputTokens());
+        }
+        return new ModelCompareResult(startedAt, runs, pause, input, totals, calls, null);
+    }
+
+    private ModelCompareResult.Call modelCompareCall(ChainEntry entry, String key, int iteration, String prompt,
+                                                     List<Stock> targets, List<List<NewsArticle>> targetNews,
+                                                     int[] newsCounts) {
+        long started = System.currentTimeMillis();
+        ModelResponse response = null;
+        try {
+            response = callProvider(entry.provider(), entry.model(), prompt);
+            Map<Integer, StockAnalysis> analyses = parseAndValidate(objectMapper, response.text(), newsCounts);
+            NumericGrounding.Result g = measureNumbers(targets, targetNews, analyses);
+            int issues = 0;
+            int citations = 0;
+            List<ModelCompareResult.Output> outputs = new ArrayList<>();
+            List<ModelCompareResult.StockOutput> stockOutputs = new ArrayList<>();
+            for (Map.Entry<Integer, StockAnalysis> en : analyses.entrySet()) {
+                int idx = en.getKey();
+                StockAnalysis a = en.getValue();
+                String name = targets.get(idx).getName();
+                for (Issue issue : a.issues()) {
+                    issues++;
+                    citations += issue.sources().size();
+                    outputs.add(new ModelCompareResult.Output(name, idx + 1, issue.text(), issue.sources()));
+                }
+                stockOutputs.add(new ModelCompareResult.StockOutput(name, idx + 1, a.sentiment(), a.positives(),
+                        a.caution(), a.risks()));
+            }
+            List<CitationAbResult.Detail> details = new ArrayList<>();
+            for (NumericGrounding.UnverifiedDetail d : g.details()) {
+                details.add(new CitationAbResult.Detail(d.stock(), d.number(), d.category(), d.sources(), d.issue()));
+            }
+            int notInAny = g.numbersNotInAnyArticle();
+            int other = g.unverifiedNumbers() - notInAny;
+            long elapsedMs = elapsed(started);
+            // 문장·기사 글은 로그에 남기지 않는다 (개수만)
+            log.info("모델 비교(본문 입력) - {} #{}: 성공 {}ms, 종목 {}개, 이슈 {}개(숫자 포함 {}), 숫자 {}개, 미확인 {}개, 다른 기사 {}개, 어느 기사에도 없음 {}개",
+                    key, iteration, elapsedMs, analyses.size(), issues, g.issuesWithNumbers(), g.numbersTotal(),
+                    g.unverifiedNumbers(), other, notInAny);
+            return new ModelCompareResult.Call(key, iteration, true, null, elapsedMs, response.promptTokens(),
+                    outputTokensWithThoughts(response), analyses.size(), issues, citations, g.issuesWithNumbers(),
+                    g.numbersTotal(), g.unverifiedNumbers(), other, notInAny, details, outputs, stockOutputs);
+        } catch (Exception e) {
+            String code = citationErrorCode(e);
+            logGoogle429(entry, e);
+            log.warn("모델 비교(본문 입력) - {} #{} 실패: {}", key, iteration, code);
+            Integer in = response != null ? response.promptTokens()
+                    : e instanceof ClaudeAnalysisClient.CallException c ? c.inputTokens() : null;
+            Integer out = response != null ? outputTokensWithThoughts(response)
+                    : e instanceof ClaudeAnalysisClient.CallException c ? c.outputTokens() : null;
+            return new ModelCompareResult.Call(key, iteration, false, code, elapsed(started), in, out,
+                    0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of());
+        }
+    }
+
+    /** Gemini 는 생각 토큰이 응답 토큰과 따로 보고되므로 더해서 출력 토큰으로 맞춘다 (Claude·OpenAI 는 이미 포함). */
+    private static Integer outputTokensWithThoughts(ModelResponse r) {
+        if (r.outputTokens() == null) return r.thoughtTokens();
+        return r.outputTokens() + (r.thoughtTokens() == null ? 0 : r.thoughtTokens());
+    }
+
+    /** Gemini 가 429 로 거절했으면 어떤 한도인지 읽을 수 있게 Google 오류 message 를 WARN 으로 남긴다 (키는 헤더로만 보내므로 들어 있지 않다). */
+    private static void logGoogle429(ChainEntry entry, Throwable e) {
+        if (!PROVIDER_GEMINI.equals(entry.provider())) return;
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof WebClientResponseException w && w.getStatusCode().value() == 429) {
+                try {
+                    String msg = new ObjectMapper().readTree(w.getResponseBodyAsString()).path("error").path("message").asText("");
+                    msg = msg.replaceAll("\\s+", " ").trim();
+                    if (msg.length() > 700) msg = msg.substring(0, 700);
+                    log.warn("모델 비교(본문 입력) - gemini:{} 429 상세: {}", entry.model(), msg);
+                } catch (Exception ignore) {
+                    // 본문을 해석하지 못하면 상세 없이 넘어간다
+                }
+                return;
+            }
+        }
+    }
+
     /** 응답 본문·예외 메시지를 내보내지 않고 짧은 코드만 쓴다. */
     private static String citationErrorCode(Exception e) {
         if (e instanceof ClaudeAnalysisClient.CallException c && c.code() != null) return c.code();
@@ -375,13 +553,15 @@ public class GeminiAnalysisService {
     }
 
     private boolean hasKey(String provider) {
-        String key = PROVIDER_CLAUDE.equals(provider) ? anthropicApiKey : geminiApiKey;
+        String key = PROVIDER_CLAUDE.equals(provider) ? anthropicApiKey
+                : PROVIDER_OPENAI.equals(provider) ? openaiApiKey : geminiApiKey;
         return key != null && !key.isBlank();
     }
 
     /** 제공자별 호출. 테스트는 callModel(Gemini)·callClaude 를 대체한다. */
     ModelResponse callProvider(String provider, String model, String prompt) {
         if (PROVIDER_CLAUDE.equals(provider)) return callClaude(model, prompt);
+        if (PROVIDER_OPENAI.equals(provider)) return callOpenAi(model, prompt);
         return callModel(model, buildRequestBody(model, prompt));
     }
 
@@ -397,10 +577,22 @@ public class GeminiAnalysisService {
         return c.call(model, prompt);
     }
 
+    /** OpenAI 호출 (모델 비교 실험 전용, WebClient). 실패하면 코드만 담은 예외를 던진다. 테스트는 이 메서드를 대체한다. */
+    ModelResponse callOpenAi(String model, String prompt) {
+        OpenAiAnalysisClient c = openAiClient;
+        if (c == null) {
+            synchronized (this) {
+                if (openAiClient == null) openAiClient = new OpenAiAnalysisClient(openaiApiKey, objectMapper);
+                c = openAiClient;
+            }
+        }
+        return c.call(model, prompt);
+    }
+
     /** 로그용 실패 사유. 설정된 키 값이 메시지에 섞여 있으면 가린다. */
     private String describe(Exception e) {
         String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-        for (String key : new String[]{anthropicApiKey, geminiApiKey}) {
+        for (String key : new String[]{anthropicApiKey, geminiApiKey, openaiApiKey}) {
             if (key != null && !key.isBlank()) msg = msg.replace(key, "***");
         }
         return msg;

@@ -18,8 +18,8 @@ import java.util.regex.Pattern;
  * 검증을 통과한 이슈 문장에서 숫자 표현(정수·소수·퍼센트)을 뽑아, 그 이슈가 인용한 기사들의 글(제목 + 모델에게 보여 준
  * 본문 또는 요약) 안에 같은 숫자 표현이 있는지 본다. 쉼표는 제거해 비교한다(1,234 == 1234).
  * 이슈 문장과 기사 글 양쪽에서 숫자를 뽑기 전에 "천" 표기를 숫자로 바꾼다("9천810억" -> "9810억", "3천만원" -> "3000만원").
- * 인용 기사에서 못 찾은 숫자는 같은 종목의 다른 기사에 있는지 한 번 더 보아, 인용 번호 오류(OTHER_ARTICLE)와
- * 어느 기사에도 없는 숫자(NOT_FOUND)로 나눈다.
+ * 인용 기사에서 못 찾은 숫자는 같은 종목의 다른 기사(OTHER_ARTICLE), 같은 실행에서 모델에게 함께 준 다른 종목의 기사(OTHER_STOCK),
+ * 어느 기사에도 없는 숫자(NOT_FOUND) 순서로 찾아 나눈다. 앞의 둘은 숫자는 입력에 있는데 근거가 잘못 붙은 경우다.
  *
  * 한계 (이 지표는 환각의 증명이 아니라 "숫자 문자열이 인용 기사에 있는가"의 점검이다):
  * - "천" 표기만 같은 값으로 맞춘다. 앞 숫자가 1~3자리이고 그 앞에 숫자·쉼표·점이 없을 때만 바꾸며("1.5천", "12,3천"은 그대로),
@@ -44,6 +44,7 @@ final class NumericGrounding {
     static final Pattern CHEON = Pattern.compile("(?<![\\d,.])(\\d{1,3})천(?:(\\d{1,3})(?!\\d)|(?!\\d))");
 
     static final String CAT_OTHER_ARTICLE = "OTHER_ARTICLE";
+    static final String CAT_OTHER_STOCK = "OTHER_STOCK";
     static final String CAT_NOT_FOUND = "NOT_FOUND";
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -67,13 +68,13 @@ final class NumericGrounding {
 
     public record Unverified(String stock, String issue, String number) {}
 
-    /** 확인되지 않은 숫자 하나의 상세. category: OTHER_ARTICLE(같은 종목의 다른 기사에는 있음) / NOT_FOUND(어느 기사에도 없음). */
+    /** 확인되지 않은 숫자 하나의 상세. category: OTHER_ARTICLE(같은 종목의 다른 기사에는 있음) / OTHER_STOCK(다른 종목의 기사에는 있음) / NOT_FOUND(어느 기사에도 없음). */
     public record UnverifiedDetail(String stock, String number, String category, List<Integer> sources, String issue) {}
 
     /**
      * issuesEvaluated: 평가한 이슈 수(분모), issuesWithNumbers: 숫자가 하나 이상 있는 이슈,
      * numbersTotal: 이슈 문장에서 뽑은 숫자 표현의 합(이슈마다 중복 제거 후 더함), unverifiedNumbers: 그중 인용 기사에서 확인되지 않은 것의 합.
-     * numbersNotInAnyArticle: 그중 같은 종목의 어느 기사에도 없는 것(NOT_FOUND)의 수. details: 확인되지 않은 숫자 전부(상한 없음).
+     * numbersNotInAnyArticle: 그중 이 실행에서 모델에게 준 어느 기사(모든 종목)에도 없는 것(NOT_FOUND)의 수. details: 확인되지 않은 숫자 전부(상한 없음).
      */
     public record Result(int issuesWithNumbers, int issuesAllConfirmed, int unverifiedNumbers, List<Unverified> examples,
                          int issuesEvaluated, int numbersTotal, int numbersNotInAnyArticle, List<UnverifiedDetail> details) {
@@ -144,6 +145,9 @@ final class NumericGrounding {
         int notInAny = 0;
         List<Unverified> examples = new ArrayList<>();
         List<UnverifiedDetail> details = new ArrayList<>();
+        // 한 번의 호출에 모든 종목의 기사가 함께 들어가므로, 다른 종목 기사의 숫자를 끌어다 쓴 경우를 따로 가린다
+        Set<String> inAnyStock = new LinkedHashSet<>();
+        for (StockInput in : inputs) for (String t : in.articleTexts()) inAnyStock.addAll(extractNumbers(t));
         for (StockInput in : inputs) {
             Set<String> inAnyArticle = new LinkedHashSet<>();
             for (String t : in.articleTexts()) inAnyArticle.addAll(extractNumbers(t));
@@ -158,7 +162,8 @@ final class NumericGrounding {
                 for (String n : missing) {
                     unverified++;
                     if (examples.size() < MAX_EXAMPLES) examples.add(new Unverified(in.stockName(), issue.text(), n));
-                    String category = inAnyArticle.contains(n) ? CAT_OTHER_ARTICLE : CAT_NOT_FOUND;
+                    String category = inAnyArticle.contains(n) ? CAT_OTHER_ARTICLE
+                            : inAnyStock.contains(n) ? CAT_OTHER_STOCK : CAT_NOT_FOUND;
                     if (CAT_NOT_FOUND.equals(category)) notInAny++;
                     details.add(new UnverifiedDetail(in.stockName(), n, category, List.copyOf(issue.sources()), issue.text()));
                 }
