@@ -11,6 +11,7 @@ import com.stocknews.service.ArticleBodyFetcher;
 import com.stocknews.service.CitationAbResult;
 import com.stocknews.service.GeminiAnalysisService;
 import com.stocknews.service.MarketPriceService;
+import com.stocknews.service.ModelCompareResult;
 import com.stocknews.service.NewsService;
 import com.stocknews.service.StockCrawlerService;
 import lombok.Getter;
@@ -157,6 +158,30 @@ public class StockScheduler {
         }
     }
 
+    /**
+     * 기사 본문 입력 모델 비교 실험: runCitationAb 와 같은 방식으로 사이클 한 번을 돌린 뒤, 같은 메모리의 뉴스(본문 포함)로
+     * 여러 모델을 비교한다. 결과는 어디에도 저장하지 않고, running 플래그를 실험이 끝날 때까지 잡는다. 이미 진행 중이면 빈 Optional.
+     * pause 가 null 이면 설정값(analysis.model-compare.pause-seconds)을 쓴다.
+     */
+    public Optional<ModelCompareResult> runModelCompare(int runs, List<String> models, Integer pause, boolean includeInput) {
+        if (!running.compareAndSet(false, true)) return Optional.empty();
+        try {
+            LocalDateTime startedAt = LocalDateTime.now();
+            CycleCapture capture = new CycleCapture();
+            runUpdateCycle(PipelineRun.TRIGGER_MANUAL, capture);
+            if (!capture.reachedAnalysis) {
+                log.warn("모델 비교(본문 입력): 사이클이 분석 단계에 이르지 못해 비교 실험을 하지 않음");
+                return Optional.of(ModelCompareResult.notRun(startedAt, runs, pause == null ? 0 : pause,
+                        new ModelCompareResult.Input(0, 0, 0, 0), models,
+                        "수집 사이클이 분석 단계까지 가지 못해 비교 실험을 하지 않았습니다."));
+            }
+            return Optional.of(geminiAnalysisService.compareModels(capture.stocks, capture.newsMap, runs, models, pause,
+                    includeInput));
+        } finally {
+            running.set(false);
+        }
+    }
+
     /** 사이클이 분석 단계까지 간 경우 그때의 종목과 뉴스(본문 포함)를 호출자에게 넘기는 상자. 일반 실행은 쓰지 않는다. */
     private static final class CycleCapture {
         boolean reachedAnalysis;
@@ -191,12 +216,15 @@ public class StockScheduler {
 
             // 2단계: 각 종목 뉴스 수집 (개별 수집)
             Map<Long, List<NewsArticle>> newsMap = new HashMap<>();
+            // 본문을 얻지 못해 채택하지 않은 후보의 상태 (본문 필수 경로에서만 채워진다)
+            List<String> skippedBodyStatuses = new java.util.ArrayList<>();
             int newsSuccess = 0, newsFailed = 0, newsArticles = 0;
             for (Stock stock : stocks) {
                 NewsStatus status;
                 try {
                     NewsService.NewsFetchResult result = newsService.fetchAndSaveNews(stock);
                     newsMap.put(stock.getId(), result.articles());
+                    if (result.skippedBodyStatuses() != null) skippedBodyStatuses.addAll(result.skippedBodyStatuses());
                     newsArticles += result.articles().size();
                     // 호출이 성공했으면 기사가 0건이어도 SUCCESS (뉴스 없음), 실패해야만 FAILED
                     status = result.success() ? NewsStatus.SUCCESS : NewsStatus.FAILED;
@@ -213,7 +241,7 @@ public class StockScheduler {
                 recordNewsStatus(stock, status);
             }
 
-            applyBodyCounts(run, newsMap);
+            applyBodyCounts(run, newsMap, skippedBodyStatuses);
 
             // 3단계: Gemini AI 분석 → 10개 종목 한 번에 요청 (API 1회 호출)
             GeminiAnalysisService.AnalysisSummary summary = geminiAnalysisService.analyzeAllStocks(stocks, newsMap);
@@ -245,7 +273,25 @@ public class StockScheduler {
 
     /** 기사별 본문 수집 상태를 세어 실행 기록에 옮긴다. 기능이 꺼져 있으면(DISABLED) 세 값 모두 0 이다. */
     static void applyBodyCounts(PipelineRun run, Map<Long, List<NewsArticle>> newsMap) {
+        applyBodyCounts(run, newsMap, List.of());
+    }
+
+    /**
+     * skippedStatuses = 본문을 얻지 못해 채택하지 않은 후보의 상태. 채택한 기사와 같은 기준으로 robots 제외·실패에 더한다
+     * (본문 필수 경로에서는 채택된 기사가 모두 BODY 이므로, 제외·실패 수는 이 목록에서만 나온다).
+     */
+    static void applyBodyCounts(PipelineRun run, Map<Long, List<NewsArticle>> newsMap, List<String> skippedStatuses) {
         int used = 0, robotsExcluded = 0, failed = 0;
+        for (String st : skippedStatuses) {
+            if (st == null) continue;
+            switch (st) {
+                case ArticleBodyFetcher.ROBOTS_DISALLOWED, ArticleBodyFetcher.AI_DISALLOWED,
+                     ArticleBodyFetcher.ROBOTS_UNKNOWN -> robotsExcluded++;
+                case ArticleBodyFetcher.FETCH_FAILED, ArticleBodyFetcher.EXTRACT_FAILED,
+                     ArticleBodyFetcher.BUDGET_EXCEEDED, ArticleBodyFetcher.INVALID_URL -> failed++;
+                default -> { }
+            }
+        }
         for (List<NewsArticle> articles : newsMap.values()) {
             if (articles == null) continue;
             for (NewsArticle a : articles) {

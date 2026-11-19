@@ -29,8 +29,14 @@ import java.util.regex.Pattern;
 @Service
 public class NewsService {
 
-    /** 종목 한 개의 본문 수집 총 시간 예산. 넘으면 남은 기사는 BUDGET_EXCEEDED (이미 시작한 요청은 끝까지 기다린다). */
-    static final long BODY_BUDGET_MS = 20_000;
+    /**
+     * 종목 한 개의 본문 수집 총 시간 예산. 넘으면 기존 경로는 남은 기사를 BUDGET_EXCEEDED 로 두고,
+     * 본문 필수 경로는 더 시도하지 않는다 (이미 시작한 요청은 끝까지 기다린다).
+     */
+    static final long BODY_BUDGET_MS = 30_000;
+
+    /** 한 종목에서 채택할 최대 기사 수 */
+    static final int MAX_ARTICLES = 5;
 
     private final NewsRepository newsRepository;
     private final ObjectMapper objectMapper;
@@ -56,6 +62,15 @@ public class NewsService {
         this(newsRepository, objectMapper, ArticleBodyFetcher.disabled(), StockAliases.none());
     }
 
+    /** 본문을 얻지 못한 기사는 채택하지 않는다 (news.body.require). 손으로 만든 인스턴스는 false 로 기존 동작을 유지한다. */
+    @Value("${news.body.require:true}")
+    private boolean requireBody = false;
+
+    /** 테스트용 스위치 */
+    void setRequireBody(boolean requireBody) {
+        this.requireBody = requireBody;
+    }
+
     @Value("${naver.api.client-id}")
     private String clientId;
 
@@ -72,7 +87,12 @@ public class NewsService {
      * 뉴스 수집 결과. success=false 는 API 호출 실패 또는 응답 해석 실패,
      * success=true 이고 articles 가 비어 있으면 호출은 성공했지만 조건에 맞는 기사가 없는 경우다.
      */
-    public record NewsFetchResult(List<NewsArticle> articles, boolean success) {}
+    public record NewsFetchResult(List<NewsArticle> articles, boolean success, List<String> skippedBodyStatuses) {
+        /** skippedBodyStatuses = 본문을 얻지 못해 채택하지 않은 후보의 본문 상태(시도한 순서). 본문 필수 경로에서만 채워진다. */
+        public NewsFetchResult(List<NewsArticle> articles, boolean success) {
+            this(articles, success, List.of());
+        }
+    }
 
     @Transactional
     public NewsFetchResult fetchAndSaveNews(Stock stock) {
@@ -80,6 +100,7 @@ public class NewsService {
         newsRepository.deleteByStock(stock);
 
         List<NewsArticle> articles = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
 
         try {
             // 검색어 = 공식 종목명 + 별칭. 이름마다 API 를 한 번씩 부른다(정확히 일치 검색).
@@ -99,9 +120,16 @@ public class NewsService {
             }
 
             // 공식 응답을 해석하지 못하면 예외 → 아래 catch 에서 실패로 처리
-            List<NewsArticle> parsed = parseNews(responses, stock.getName(), aliasNames, ZonedDateTime.now());
-            attachBodies(parsed, BODY_BUDGET_MS); // 실패해도 예외를 던지지 않고 기사별 상태로만 남긴다
-            for (NewsArticle article : parsed) {
+            List<NewsArticle> chosen;
+            if (requireBody && bodyFetcher.isEnabled()) {
+                // 본문을 얻은 기사만 채택한다. 본문 없는 기사를 건너뛰면 다른 언론사의 같은 소식이 채택될 수 있다.
+                List<Candidate> candidates = buildCandidates(responses, stock.getName(), aliasNames, ZonedDateTime.now());
+                chosen = selectWithBodies(candidates, BODY_BUDGET_MS, skipped);
+            } else {
+                chosen = parseNews(responses, stock.getName(), aliasNames, ZonedDateTime.now());
+                attachBodies(chosen, BODY_BUDGET_MS); // 실패해도 예외를 던지지 않고 기사별 상태로만 남긴다
+            }
+            for (NewsArticle article : chosen) {
                 article.setStock(stock);
                 newsRepository.save(article);
                 articles.add(article);
@@ -114,7 +142,7 @@ public class NewsService {
                 log.info("별칭 검색 - {}: 검색어 {}개, 채택 {}건 중 별칭 표기로만 걸린 기사 {}건",
                         stock.getName(), aliasNames.size() + 1, articles.size(), aliasOnly);
             }
-            return new NewsFetchResult(articles, true);
+            return new NewsFetchResult(articles, true, List.copyOf(skipped));
 
         } catch (Exception e) {
             // 실패를 "뉴스 없음"으로 위장하지 않는다. 호출 측이 success=false 를 보고 상태를 FAILED 로 기록한다.
@@ -152,31 +180,101 @@ public class NewsService {
         long start = System.nanoTime();
         for (NewsArticle article : articles) {
             ArticleBodyFetcher.BodyResult result;
-            try {
-                if (!bodyFetcher.isEnabled()) {
-                    result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.DISABLED, null);
-                } else if ((System.nanoTime() - start) / 1_000_000 >= budgetMs) {
-                    result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.BUDGET_EXCEEDED, null);
-                } else {
-                    result = bodyFetcher.fetch(article.getOriginalLink(), article.getLink());
-                }
-            } catch (Exception e) {
-                result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.FETCH_FAILED, null);
-            }
-            if (result == null) result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.FETCH_FAILED, null);
-            boolean used = ArticleBodyFetcher.BODY.equals(result.status())
-                    && result.text() != null && !result.text().isBlank();
-            if (used) {
-                article.setBody(result.text());
-                article.setBodyStatus(ArticleBodyFetcher.BODY);
-                article.setBodyChars(result.text().length());
+            if (!bodyFetcher.isEnabled()) {
+                result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.DISABLED, null);
+            } else if ((System.nanoTime() - start) / 1_000_000 >= budgetMs) {
+                result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.BUDGET_EXCEEDED, null);
             } else {
-                article.setBody(null);
-                article.setBodyStatus(ArticleBodyFetcher.BODY.equals(result.status())
-                        ? ArticleBodyFetcher.EXTRACT_FAILED : result.status());
-                article.setBodyChars(null);
+                result = fetchBody(article);
+            }
+            applyBody(article, result);
+        }
+    }
+
+    /** 기사 한 건의 본문을 요청한다. 예외·null 은 FETCH_FAILED 로 바꾼다. */
+    private ArticleBodyFetcher.BodyResult fetchBody(NewsArticle article) {
+        ArticleBodyFetcher.BodyResult result;
+        try {
+            result = bodyFetcher.fetch(article.getOriginalLink(), article.getLink());
+        } catch (Exception e) {
+            result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.FETCH_FAILED, null);
+        }
+        if (result == null) result = new ArticleBodyFetcher.BodyResult(ArticleBodyFetcher.FETCH_FAILED, null);
+        return result;
+    }
+
+    /** 결과를 기사에 기록하고 최종 상태를 돌려준다 (BODY 인데 글자가 비면 EXTRACT_FAILED). */
+    private String applyBody(NewsArticle article, ArticleBodyFetcher.BodyResult result) {
+        boolean used = ArticleBodyFetcher.BODY.equals(result.status())
+                && result.text() != null && !result.text().isBlank();
+        if (used) {
+            article.setBody(result.text());
+            article.setBodyStatus(ArticleBodyFetcher.BODY);
+            article.setBodyChars(result.text().length());
+        } else {
+            article.setBody(null);
+            article.setBodyStatus(ArticleBodyFetcher.BODY.equals(result.status())
+                    ? ArticleBodyFetcher.EXTRACT_FAILED : result.status());
+            article.setBodyChars(null);
+        }
+        return article.getBodyStatus();
+    }
+
+    /** 필터를 통과한 후보 기사와 중복 비교용 정규화 제목. */
+    record Candidate(NewsArticle article, String normalizedTitle) {}
+
+    /**
+     * 후보를 순서대로 훑으며, 이미 채택한 기사와 중복이면 건너뛰고(본문도 요청하지 않는다), 아니면 본문을 가져와
+     * BODY 일 때만 채택한다. 본문이 없는 후보는 건너뛰고 상태를 skipped 에 남긴다(중복 비교 대상도 아니다).
+     * 5건을 채우거나, 후보가 끝나거나, 시간 예산을 넘기면 멈춘다. 채택 순서가 곧 인용 번호 순서다.
+     */
+    List<NewsArticle> selectWithBodies(List<Candidate> candidates, long budgetMs, List<String> skipped) {
+        long start = System.nanoTime();
+        List<NewsArticle> adopted = new ArrayList<>();
+        List<String> keptTitles = new ArrayList<>();
+        Set<String> keptLinks = new HashSet<>();
+        int tried = 0;
+        int untried = 0;
+        for (int i = 0; i < candidates.size() && adopted.size() < MAX_ARTICLES; i++) {
+            Candidate c = candidates.get(i);
+            if (isDuplicate(c, keptTitles, keptLinks)) {
+                log.debug("중복 기사 제외: {}", c.article().getTitle());
+                continue;
+            }
+            if ((System.nanoTime() - start) / 1_000_000 >= budgetMs) {
+                for (int j = i; j < candidates.size(); j++) {
+                    if (!isDuplicate(candidates.get(j), keptTitles, keptLinks)) untried++;
+                }
+                break;
+            }
+            tried++;
+            String status = applyBody(c.article(), fetchBody(c.article()));
+            if (ArticleBodyFetcher.BODY.equals(status)) {
+                adopted.add(c.article());
+                rememberAdopted(c, keptTitles, keptLinks);
+            } else {
+                skipped.add(status);
             }
         }
+        long robots = skipped.stream().filter(x -> x.equals(ArticleBodyFetcher.ROBOTS_DISALLOWED)
+                || x.equals(ArticleBodyFetcher.AI_DISALLOWED) || x.equals(ArticleBodyFetcher.ROBOTS_UNKNOWN)).count();
+        long failed = skipped.stream().filter(x -> x.equals(ArticleBodyFetcher.FETCH_FAILED)).count();
+        log.info("본문 필수 선택: 후보 {}건 중 {}건 시도, 채택 {}건, 건너뜀 {}건 (robots {}, 수집 실패 {}, 그 외 {}), 예산 초과로 시도 못 함 {}건",
+                candidates.size(), tried, adopted.size(), skipped.size(), robots, failed,
+                skipped.size() - robots - failed, untried);
+        return adopted;
+    }
+
+    private static boolean isDuplicate(Candidate c, List<String> keptTitles, Set<String> keptLinks) {
+        String link = c.article().getLink();
+        return (link != null && !link.isBlank() && keptLinks.contains(link))
+                || isDuplicateOfAny(c.normalizedTitle(), keptTitles);
+    }
+
+    private static void rememberAdopted(Candidate c, List<String> keptTitles, Set<String> keptLinks) {
+        keptTitles.add(c.normalizedTitle());
+        String link = c.article().getLink();
+        if (link != null && !link.isBlank()) keptLinks.add(link);
     }
 
     /**
@@ -196,6 +294,34 @@ public class NewsService {
      * @throws IOException 공식 종목명 응답을 해석하지 못할 때
      */
     List<NewsArticle> parseNews(List<String> responses, String stockName, List<String> aliasNames, ZonedDateTime now)
+            throws IOException {
+        List<Candidate> candidates = buildCandidates(responses, stockName, aliasNames, now);
+        List<NewsArticle> result = new ArrayList<>();
+        List<String> keptTitles = new ArrayList<>();   // 채택한 기사의 정규화 제목 (중복 비교용)
+        Set<String> keptLinks = new HashSet<>();
+        int duplicates = 0;
+        for (Candidate c : candidates) {
+            if (result.size() >= MAX_ARTICLES) break;
+            // 중복 제거: 같은 링크이거나 제목이 (거의) 같으면 먼저 나온 기사만 남긴다
+            if (isDuplicate(c, keptTitles, keptLinks)) {
+                duplicates++;
+                log.debug("중복 기사 제외: {}", c.article().getTitle());
+                continue;
+            }
+            result.add(c.article());
+            rememberAdopted(c, keptTitles, keptLinks);
+        }
+        log.debug("중복 기사 {}건 제외 ({}): 최종 {}건", duplicates, stockName, result.size());
+        return result;
+    }
+
+    /**
+     * 응답들을 번갈아 합쳐(공식1, 별칭1, 공식2 …) 중복 제거·개수 제한을 뺀 필터(48시간, 제목에 이름 포함,
+     * 이름이 독립 단어)만 적용한 후보 목록을 만든다. 순수 로직.
+     *
+     * @throws IOException 공식 종목명 응답을 해석하지 못할 때
+     */
+    List<Candidate> buildCandidates(List<String> responses, String stockName, List<String> aliasNames, ZonedDateTime now)
             throws IOException {
         String official = (responses == null || responses.isEmpty()) ? null : responses.get(0);
         List<List<JsonNode>> lists = new ArrayList<>();
@@ -220,14 +346,9 @@ public class NewsService {
         }
 
         ZonedDateTime cutoff = now.minusHours(48);
-        List<NewsArticle> result = new ArrayList<>();
-        List<String> keptTitles = new ArrayList<>();   // 채택한 기사의 정규화 제목 (중복 비교용)
-        Set<String> keptLinks = new HashSet<>();
-        int duplicates = 0;
+        List<Candidate> result = new ArrayList<>();
         int otherCompany = 0;
         for (JsonNode item : merged) {
-            if (result.size() >= 5) break;
-
             // 48시간 필터
             String pubDateStr = item.path("pubDate").asText("");
             if (!isWithin48Hours(pubDateStr, cutoff)) {
@@ -248,27 +369,15 @@ public class NewsService {
                 continue;
             }
 
-            // 중복 제거: 같은 링크이거나 제목이 (거의) 같으면 먼저 나온 기사만 남긴다
-            String link = item.path("link").asText("");
-            String normalized = normalizeTitle(title, names);
-            if ((!link.isBlank() && keptLinks.contains(link)) || isDuplicateOfAny(normalized, keptTitles)) {
-                duplicates++;
-                log.debug("중복 기사 제외: {}", title);
-                continue;
-            }
-
             NewsArticle article = new NewsArticle();
             article.setTitle(title);
             article.setDescription(cleanHtml(item.path("description").asText("")));
-            article.setLink(link);
+            article.setLink(item.path("link").asText(""));
             article.setOriginalLink(item.path("originallink").asText(""));
             article.setPubDate(pubDateStr);
-            result.add(article);
-            keptTitles.add(normalized);
-            if (!link.isBlank()) keptLinks.add(link);
+            result.add(new Candidate(article, normalizeTitle(title, names)));
         }
-        log.debug("중복 기사 {}건, 다른 단어 일부로만 종목명이 나온 기사 {}건 제외 ({}): 최종 {}건",
-                duplicates, otherCompany, stockName, result.size());
+        log.debug("다른 단어 일부로만 종목명이 나온 기사 {}건 제외 ({}): 후보 {}건", otherCompany, stockName, result.size());
         return result;
     }
 
