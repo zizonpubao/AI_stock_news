@@ -22,7 +22,7 @@ analysis:
   models: ${ANALYSIS_MODELS:}
   # 인용 기사에서 숫자를 확인하지 못한 이슈 문장은 저장하지 않는다. 끄려면 ANALYSIS_DROP_UNVERIFIED=false
   # 종목마다 따로 호출해 다른 종목 기사의 내용이 섞이지 않게 한다. 한 번에 호출하려면 ANALYSIS_PER_STOCK=false
-  per-stock: ${ANALYSIS_PER_STOCK:false}
+  per-stock: ${ANALYSIS_PER_STOCK:true}
   drop-unverified-issues: ${ANALYSIS_DROP_UNVERIFIED:true}
 
 anthropic:

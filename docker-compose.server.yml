@@ -34,7 +34,7 @@ services:
       NEWS_ALIASES_ENABLED: ${NEWS_ALIASES_ENABLED:-true}   # 종목 별칭 검색. 끄려면 false
       NEWS_REQUIRE_BODY: ${NEWS_REQUIRE_BODY:-true}   # 본문을 얻은 기사만 채택. 이전 동작(요약문 대체)은 false
       ANALYSIS_DROP_UNVERIFIED: ${ANALYSIS_DROP_UNVERIFIED:-true}   # 인용 기사에서 숫자를 확인 못 한 이슈 문장은 저장하지 않음
-      ANALYSIS_PER_STOCK: ${ANALYSIS_PER_STOCK:-false}   # true 면 종목마다 따로 호출(다른 종목 기사가 섞이지 않음, 호출 10회)
+      ANALYSIS_PER_STOCK: ${ANALYSIS_PER_STOCK:-true}   # 종목마다 따로 호출(다른 종목 기사가 섞이지 않음, 호출 10회). 한 번에 호출하려면 false
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}              # 관리용 API 토큰. 비우면 수동 갱신/아카이브 API 차단
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,https://*.vercel.app}
     ports:
