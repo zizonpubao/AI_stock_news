@@ -67,6 +67,8 @@ public class PipelineRun {
     /** 확인되지 않은 숫자 전부의 JSON 배열 [{stock, number, category(OTHER_ARTICLE/OTHER_STOCK/NOT_FOUND), sources, issue}]. 측정하지 않았으면 null, 없으면 "[]" */
     @Column(columnDefinition = "TEXT")
     private String numbersUnverifiedDetail;
+    /** 인용 기사에서 숫자를 확인하지 못해 내보내지 않은 이슈 문장 수. 측정하지 않았거나 가드가 꺼져 있으면 null */
+    private Integer issuesDroppedUnverified;
 
     /** 본문을 AI 입력으로 쓴 기사 수 (BODY). 수집 단계에 도달하지 못한 실행은 null, 기능이 꺼져 있으면 0 */
     private Integer bodiesUsed;
